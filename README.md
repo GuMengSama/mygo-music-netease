@@ -17,7 +17,6 @@ The minimum supported MyGo Music version is listed in [`plugin.json`](plugin.jso
 - **Sign in:** scan the QR code with the NetEase Cloud Music app.
 - **Browse and play:** search, albums, artists, playlists, charts and lyrics with translations. Signing in adds daily recommendations, your playlists and saved albums, and likes.
 - **Quality:** follows the player's quality, falling back to lower levels. Turn on **Prefer Hi-Res** to ask for Hi-Res in place of Lossless.
-- **Mainland IP:** optional. Requests are sent as if from this mainland Chinese IP address.
 - **Language:** follows MyGo Music's English or Simplified Chinese setting.
 
 Subscription and purchase restrictions still apply. Trial previews are not played as full songs. Session cookies go only to `music.163.com` and `interface.music.163.com`.

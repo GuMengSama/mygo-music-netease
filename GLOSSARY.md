@@ -12,9 +12,7 @@
 
 **Unavailable**: a Track the Listener can't play in full: VIP-only without VIP, region-locked, or delisted.
 
-**Region Lock**: NetEase refusing a Track to a Listener outside mainland China. A region-locked Track is Unavailable unless the Listener sets a Mainland IP.
-
-**Mainland IP**: a mainland Chinese address the Listener can give, so NetEase treats their requests as coming from inside China.
+**Region Lock**: NetEase refusing a Track to a Listener outside mainland China. A region-locked Track is Unavailable.
 
 **Session**: the Listener's signed-in state with NetEase, started by scanning a QR code. When it expires, the Listener signs in again.
 

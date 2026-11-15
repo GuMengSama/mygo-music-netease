@@ -201,11 +201,6 @@ async function call(path: string, data: Record<string, any> = {}, options: Optio
     "content-type": "application/x-www-form-urlencoded",
     cookie: cookieText({ ...cookies, ...eapiHeader }),
   };
-  const ip = String(host.setting("mainlandIP") ?? "").trim();
-  if (ip) {
-    headers["x-real-ip"] = ip;
-    headers["x-forwarded-for"] = ip;
-  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT);
   let res: Response;

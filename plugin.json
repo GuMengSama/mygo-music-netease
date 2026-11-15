@@ -14,11 +14,6 @@
       "label": "Prefer Hi-Res",
       "type": "boolean",
       "help": "When the app's quality is Lossless, ask for Hi-Res first. Type true or false if your app shows a text field."
-    },
-    {
-      "key": "mainlandIP",
-      "label": "Mainland IP",
-      "help": "Outside mainland China, NetEase won't play many songs. A mainland Chinese IP address here, such as 116.25.146.177, makes requests look like they come from there. Leave blank otherwise."
     }
   ],
   "navigation": [

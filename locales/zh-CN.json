@@ -2,8 +2,6 @@
   "NetEase Cloud Music": "网易云音乐",
   "Prefer Hi-Res": "优先 Hi-Res",
   "When the app's quality is Lossless, ask for Hi-Res first. Type true or false if your app shows a text field.": "应用音质为无损时，优先请求 Hi-Res。若显示为文本框，请填 true 或 false。",
-  "Mainland IP": "国内 IP",
-  "Outside mainland China, NetEase won't play many songs. A mainland Chinese IP address here, such as 116.25.146.177, makes requests look like they come from there. Leave blank otherwise.": "在中国大陆以外，网易云的很多歌曲无法播放。在此填写一个国内 IP 地址（如 116.25.146.177），请求会被视为来自该地址。否则留空。",
   "Charts": "排行榜",
   "Home": "首页",
   "Daily Recommendations": "每日推荐",
