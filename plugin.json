@@ -20,7 +20,7 @@
     { "builtin": "home" },
     { "title": "Charts", "page": "charts", "icon": "chart" },
     { "title": "Personal FM", "builtin": "stations" },
-    { "title": "Podcasts", "builtin": "shows" },
+    { "title": "Podcasts", "page": "podcasts", "icon": "podcast" },
     { "builtin": "savedAlbums" }
   ]
 }

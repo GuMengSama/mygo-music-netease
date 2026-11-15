@@ -1,6 +1,6 @@
 import { answer, reset, sent } from "./netease";
 import { beforeEach, expect, test } from "bun:test";
-import { isLiked, likeEpisode, search, show, shows, stream, subscribeShow } from "../index";
+import { browse, isLiked, likeEpisode, search, show, shows, stream, subscribeShow } from "../index";
 import { storage } from "./host";
 
 beforeEach(() => reset());
@@ -120,4 +120,51 @@ test("liked Episodes are each listener's own", async () => {
   await likeEpisode({ id: ep, on: true });
   storage.set("session", { cookie: "MUSIC_U=other", account: { id: "99", name: "them" } });
   expect(await isLiked({ ids: [ep] })).toEqual({ [ep]: false });
+});
+
+// The Podcasts page: the listener's own, then NetEase's picks, then what's popular.
+const other = { id: 5, name: "热门", subed: false };
+const popular = { id: "5", name: "热门", subscribed: false };
+
+test("the Podcasts page has subscriptions, picks and popular shows", async () => {
+  answer("/api/djradio/get/subed", { code: 200, djRadios: [radio] });
+  answer("/api/djradio/recommend/v1", { code: 200, djRadios: [radio] });
+  answer("/api/djradio/hot/v1", { code: 200, djRadios: [other], hasMore: true });
+  expect(await browse({ page: "podcasts" })).toEqual({
+    title: "Podcasts",
+    sections: [
+      { title: "My Subscriptions", shows: [podcast] },
+      { title: "Recommended Podcasts", shows: [podcast] },
+      { title: "Popular Podcasts", shows: [popular] },
+    ],
+  });
+  expect(sent("/api/djradio/hot/v1")[0]).toMatchObject({ offset: 0, limit: 30 });
+});
+
+// Signed out, there are no subscriptions to ask for, but the rest is there.
+test("the Podcasts page signed out", async () => {
+  reset(false);
+  answer("/api/djradio/recommend/v1", { code: 200, djRadios: [radio] });
+  answer("/api/djradio/hot/v1", { code: 200, djRadios: [other] });
+  const page = await browse({ page: "podcasts" });
+  expect(page.sections.map((s) => s.title)).toEqual(["Recommended Podcasts", "Popular Podcasts"]);
+  expect(sent("/api/djradio/get/subed")).toEqual([]);
+});
+
+// A section with nothing in it isn't shown.
+test("the Podcasts page leaves out empty sections", async () => {
+  answer("/api/djradio/get/subed", { code: 200, djRadios: [] });
+  answer("/api/djradio/recommend/v1", { code: 200 });
+  answer("/api/djradio/hot/v1", { code: 200, djRadios: [other] });
+  expect((await browse({ page: "podcasts" })).sections).toEqual([{ title: "Popular Podcasts", shows: [popular] }]);
+});
+
+// A section NetEase fails to give is left out, and the page fails only when all do.
+test("the Podcasts page leaves out what fails", async () => {
+  answer("/api/djradio/get/subed", { code: 500 });
+  answer("/api/djradio/recommend/v1", { code: 200, djRadios: [radio] });
+  answer("/api/djradio/hot/v1", { code: 500 });
+  expect((await browse({ page: "podcasts" })).sections).toEqual([{ title: "Recommended Podcasts", shows: [podcast] }]);
+  answer("/api/djradio/recommend/v1", { code: 500 });
+  await expect(browse({ page: "podcasts" })).rejects.toThrow("(500)");
 });

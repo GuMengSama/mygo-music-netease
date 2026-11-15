@@ -43,7 +43,7 @@ type Show = { id: string; name?: string; imageUrl?: string; description?: string
 type Comment = { id: string; author?: string; avatarUrl?: string; text?: string; time?: number; likes?: number; liked: boolean };
 type Account = { id: string; name?: string; imageUrl?: string };
 type Stream = { url: string; type: string; quality: string; bitRate: number; size: number; headers: Record<string, string> };
-type Section = { title?: string; tracks?: Track[]; albums?: Album[]; playlists?: Playlist[] };
+type Section = { title?: string; tracks?: Track[]; albums?: Album[]; playlists?: Playlist[]; shows?: Show[] };
 type Browse = { title?: string; sections: Section[] };
 
 // What NetEase sends. It may leave out any field, so all are optional, and
@@ -841,11 +841,47 @@ export async function home(): Promise<Browse> {
   };
 }
 
-export async function browse({ page }: { page: string }): Promise<Browse> {
-  if (page !== "charts") throw fail("unsupported", "There's no such page.");
+async function charts(): Promise<Browse> {
   const body = await api<{ list?: NPlaylist[] }>("/api/toplist");
   return {
     title: host.t("Charts"),
     sections: [{ playlists: list(body.list).map((p) => ({ ...toPlaylist(p), description: p.updateFrequency })) }],
   };
+}
+
+async function showsAt(path: string, data: Record<string, unknown> = {}): Promise<Show[]> {
+  return list((await api<{ djRadios?: NRadio[] }>(path, data)).djRadios).map(toShow);
+}
+
+type Shelf = { title: string; load: () => Promise<Show[]> };
+
+// The Podcasts page: the listener's own, when signed in, then NetEase's picks,
+// then what's popular. A shelf that's empty or fails is left out; the page
+// fails only when every shelf does.
+async function podcasts(): Promise<Browse> {
+  const shelves: Shelf[] = [
+    ...(session() ? [{ title: "My Subscriptions", load: shows }] : []),
+    { title: "Recommended Podcasts", load: () => showsAt("/api/djradio/recommend/v1") },
+    { title: "Popular Podcasts", load: () => showsAt("/api/djradio/hot/v1", { offset: 0, limit: PAGE }) },
+  ];
+  const results = await Promise.allSettled(shelves.map((s) => s.load()));
+  const failed = results.filter((r) => r.status === "rejected");
+  if (failed.length === results.length) throw failed[0].reason;
+  return {
+    title: host.t("Podcasts"),
+    sections: results.flatMap((r, i) =>
+      r.status === "fulfilled" && r.value.length ? [{ title: host.t(shelves[i].title), shows: r.value }] : [],
+    ),
+  };
+}
+
+const PAGES = new Map<string, () => Promise<Browse>>([
+  ["charts", charts],
+  ["podcasts", podcasts],
+]);
+
+export async function browse({ page }: { page: string }): Promise<Browse> {
+  const make = PAGES.get(page);
+  if (!make) throw fail("unsupported", "There's no such page.");
+  return make();
 }
