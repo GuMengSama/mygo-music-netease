@@ -857,7 +857,8 @@ type Shelf = { title: string; load: () => Promise<Show[]> };
 
 // The Podcasts page: the listener's own, when signed in, then NetEase's picks,
 // then what's popular. A shelf that's empty or fails is left out; the page
-// fails only when every shelf does.
+// fails only when every shelf does, or when the sign-in has expired, so the
+// app asks for it again.
 async function podcasts(): Promise<Browse> {
   const shelves: Shelf[] = [
     ...(session() ? [{ title: "My Subscriptions", load: shows }] : []),
@@ -865,8 +866,10 @@ async function podcasts(): Promise<Browse> {
     { title: "Popular Podcasts", load: () => showsAt("/api/djradio/hot/v1", { offset: 0, limit: PAGE }) },
   ];
   const results = await Promise.allSettled(shelves.map((s) => s.load()));
-  const failed = results.filter((r) => r.status === "rejected");
-  if (failed.length === results.length) throw failed[0].reason;
+  const failed = results.filter((r) => r.status === "rejected").map((r) => r.reason);
+  const signIn = failed.find((e) => e?.code === "signIn");
+  if (signIn) throw signIn;
+  if (failed.length === results.length) throw failed[0];
   return {
     title: host.t("Podcasts"),
     sections: results.flatMap((r, i) =>

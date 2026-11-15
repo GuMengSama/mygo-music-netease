@@ -168,3 +168,11 @@ test("the Podcasts page leaves out what fails", async () => {
   answer("/api/djradio/recommend/v1", { code: 500 });
   await expect(browse({ page: "podcasts" })).rejects.toThrow("(500)");
 });
+
+// A sign-in NetEase no longer accepts fails the page, asking to sign in again.
+test("the Podcasts page asks to sign in again when the sign-in has expired", async () => {
+  answer("/api/djradio/get/subed", { code: 301 });
+  answer("/api/djradio/recommend/v1", { code: 200, djRadios: [radio] });
+  answer("/api/djradio/hot/v1", { code: 200, djRadios: [other] });
+  await expect(browse({ page: "podcasts" })).rejects.toMatchObject({ code: "signIn" });
+});
