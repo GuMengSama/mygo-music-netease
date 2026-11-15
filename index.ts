@@ -37,6 +37,26 @@ export function levelsFor(quality: string, preferHiRes: boolean): string[] {
   return LEVELS.slice(0, LEVELS.indexOf(top) + 1).reverse();
 }
 
+// What an id the app hands back names: a song, or an Episode, which is a
+// programme playing a song of its own.
+export type Ref = { kind: "song"; id: string } | { kind: "episode"; programId: string; songId: string };
+
+export function episodeId(programId: string, songId: string): string {
+  return `program:${programId}:${songId}`;
+}
+
+export function refOf(id: string): Ref {
+  const [kind, programId, songId] = String(id).split(":");
+  return kind === "program" ? { kind: "episode", programId, songId } : { kind: "song", id };
+}
+
+// Where a song's or an Episode's comments are: its thread, and its id in it.
+export function commentsOf(ref: Ref): { thread: string; rid: string } {
+  return ref.kind === "song"
+    ? { thread: `R_SO_4_${ref.id}`, rid: ref.id }
+    : { thread: `A_DJ_1_${ref.programId}`, rid: ref.programId };
+}
+
 // An image the app asks for at the size it shows it, from NetEase's CDN.
 export function imageOf(url?: string): string | undefined {
   if (!url) return undefined;
@@ -145,6 +165,36 @@ export function toPlaylist(p: any) {
     trackCount: p.trackCount,
     imageUrl: imageOf(p.coverImgUrl ?? p.picUrl),
     description: p.description,
+  });
+}
+
+// A Podcast from a NetEase show.
+export function toShow(r: any) {
+  return compact({
+    id: String(r.id),
+    name: text(r.name),
+    imageUrl: imageOf(r.picUrl),
+    description: r.desc,
+    publisher: r.dj?.nickname,
+    episodeCount: r.programCount,
+    subscribed: !!r.subed,
+  });
+}
+
+// An Episode from a NetEase programme: a Track of its Podcast, playing the
+// programme's own song.
+export function toEpisode(p: any) {
+  const song = String(p.mainSong?.id ?? "");
+  const radio = p.radio ?? {};
+  return compact({
+    id: episodeId(String(p.id), song),
+    name: text(p.name),
+    duration: p.duration ?? 0,
+    album: albumRefOf({ id: radio.id, name: radio.name, picUrl: p.coverUrl }),
+    showId: String(radio.id ?? ""),
+    description: p.description,
+    published: dateOf(p.createTime),
+    unavailable: song ? undefined : true,
   });
 }
 
@@ -372,6 +422,7 @@ const SEARCH_TYPES: Record<string, SearchType> = {
   albums: { code: 10, field: "albums", countField: "albumCount", map: toAlbum },
   artists: { code: 100, field: "artists", countField: "artistCount", map: toArtist },
   playlists: { code: 1000, field: "playlists", countField: "playlistCount", map: toPlaylist },
+  shows: { code: 1009, field: "djRadios", countField: "djRadiosCount", map: toShow },
 };
 
 export async function search({ query, kind, offset = 0 }: { query: string; kind: string; offset?: number }) {
@@ -381,6 +432,11 @@ export async function search({ query, kind, offset = 0 }: { query: string; kind:
   const result = (await api("/api/cloudsearch/pc", { s: query, type: code, limit: PAGE, offset, total: true })).result ?? {};
   const items = list(result[field]).map(map);
   return { [kind]: items, more: offset + items.length < (result[countField] ?? 0) };
+}
+
+export async function suggest({ query }: { query: string }): Promise<string[]> {
+  const result = (await api("/api/search/suggest/keyword", { s: query })).result ?? {};
+  return list(result.allMatch).map((m: any) => text(m.keyword));
 }
 
 export async function album({ id }: { id: string }) {
@@ -406,12 +462,17 @@ export async function artist({ id }: { id: string }) {
   };
 }
 
-export async function playlist({ id }: { id: string }) {
+// A playlist as NetEase sends it, with the ids of all its songs in order.
+async function playlistDetail(id: string) {
   const body = await api("/api/v6/playlist/detail", { id, n: 100000, s: 8 });
   const p = body.playlist ?? {};
+  return { body, p, ids: list(p.trackIds).map((t: any) => String(t.id)) as string[] };
+}
+
+export async function playlist({ id }: { id: string }) {
+  const { body, p, ids } = await playlistDetail(id);
   const tracks = tracksFrom(p.tracks, body.privileges);
   // NetEase sends the first thousand or so songs whole, and only ids after.
-  const ids = list(p.trackIds).map((t: any) => String(t.id));
   tracks.push(...(await tracksOf(ids.slice(tracks.length))));
   const out: any = { ...toPlaylist(p), tracks };
   if (me() && String(p.creator?.userId) === me()) {
@@ -430,13 +491,108 @@ export async function lyrics({ id }: { id: string }) {
   return compact({ lrc: body.lrc?.lyric, translation: body.tlyric?.lyric });
 }
 
+// The song an id plays: its own, or an Episode's programme's.
+function songOf(id: string): string {
+  const ref = refOf(id);
+  return ref.kind === "song" ? ref.id : ref.songId;
+}
+
 export async function stream({ id, quality }: { id: string; quality: string }) {
+  const song = songOf(id);
   for (const level of levelsFor(quality, host.setting("preferHiRes") === "true")) {
-    const body = await api("/api/song/enhance/player/url/v1", { ids: JSON.stringify([id]), level, encodeType: "flac" });
-    const s = streamOf(list(body.data).find((x: any) => String(x.id) === String(id)));
+    const body = await api("/api/song/enhance/player/url/v1", { ids: JSON.stringify([song]), level, encodeType: "flac" });
+    const s = streamOf(list(body.data).find((x: any) => String(x.id) === song));
     if (s) return s;
   }
   throw fail("unavailable", "NetEase won't play this song for this account here.");
+}
+
+// ---- Personal FM ----
+
+export async function stations() {
+  if (!session()) throw fail("signIn", "Sign in to NetEase Cloud Music first.");
+  return [{ id: "fm", name: host.t("Personal FM"), description: host.t("Songs NetEase picks for you, one after another") }];
+}
+
+export async function stationNext(_: { id: string }) {
+  return tracksFrom((await api("/api/v1/radio/get", {}, mine)).data);
+}
+
+// ---- Podcasts ----
+
+export async function shows() {
+  return list((await api("/api/djradio/get/subed", { limit: 1000 }, mine)).djRadios).map(toShow);
+}
+
+export async function show({ id, offset = 0 }: { id: string; offset?: number }) {
+  const [info, episodes] = await Promise.all([
+    api("/api/djradio/v2/get", { id }),
+    api("/api/dj/program/byradio", { radioId: id, offset, limit: PAGE, asc: false }),
+  ]);
+  return { show: toShow(info.data ?? { id }), episodes: list(episodes.programs).map(toEpisode), more: !!episodes.more };
+}
+
+export async function subscribeShow({ id, on }: { id: string; on: boolean }) {
+  await api(`/api/djradio/${on ? "sub" : "unsub"}`, { id }, mine);
+}
+
+export async function likeEpisode({ id, on }: { id: string; on: boolean }) {
+  const { thread } = commentsOf(refOf(id));
+  await api(`/api/resource/${on ? "like" : "unlike"}`, { threadId: thread }, mine);
+  const liked = likedEpisodes();
+  if (on) liked.add(id);
+  else liked.delete(id);
+  host.storage.set(likedEpisodesKey(), [...liked]);
+}
+
+// NetEase doesn't say which Episodes a listener likes, so the plugin keeps
+// those they liked here, for each listener.
+const likedEpisodesKey = () => `likedEpisodes:${me()}`;
+const likedEpisodes = () => new Set<string>(list(host.storage.get(likedEpisodesKey())));
+
+// ---- Comments ----
+
+export function toComment(c: any) {
+  return compact({
+    id: String(c.commentId),
+    author: text(c.user?.nickname),
+    avatarUrl: imageOf(c.user?.avatarUrl),
+    text: text(c.content),
+    time: c.time,
+    likes: c.likedCount,
+    liked: !!c.liked,
+  });
+}
+
+// Hot Comments, then the newest, each once.
+export function firstPage(hot: any[], newest: any[]) {
+  const seen = new Set<string>();
+  return [...hot, ...newest].map(toComment).filter((c) => !seen.has(c.id!) && !!seen.add(c.id!));
+}
+
+const COMMENT_PAGE = 20;
+// The most Hot Comments NetEase puts on a first page.
+const HOT_MAX = 15;
+
+export async function comments({ trackId, offset = 0 }: { trackId: string; offset?: number }) {
+  const { thread, rid } = commentsOf(refOf(trackId));
+  // The app counts the Hot Comments it has as if they were newest: ask from
+  // as far back as they could have taken, and let it pass over repeats.
+  const newestOffset = offset && Math.max(0, offset - HOT_MAX);
+  const body = await api(`/api/v1/resource/comments/${thread}`, { rid, offset: newestOffset, limit: COMMENT_PAGE });
+  const page = offset === 0 ? firstPage(list(body.hotComments), list(body.comments)) : list(body.comments).map(toComment);
+  return { comments: page, total: body.total, more: !!body.more };
+}
+
+export async function likeComment({ trackId, commentId, on }: { trackId: string; commentId: string; on: boolean }) {
+  const { thread } = commentsOf(refOf(trackId));
+  await api(`/api/v1/comment/${on ? "like" : "unlike"}`, { threadId: thread, commentId }, mine);
+}
+
+export async function postComment({ trackId, text: content }: { trackId: string; text: string }) {
+  const { thread } = commentsOf(refOf(trackId));
+  const body = await api("/api/resource/comments/add", { threadId: thread, content }, mine);
+  return toComment(body.comment ?? {});
 }
 
 // ---- Library ----
@@ -450,8 +606,9 @@ async function likedSet(): Promise<Set<string>> {
 }
 
 export async function isLiked({ ids }: { ids: string[] }) {
-  const set = await likedSet();
-  return Object.fromEntries(ids.map((id) => [id, set.has(String(id))]));
+  const songs = await likedSet();
+  const episodes = likedEpisodes();
+  return Object.fromEntries(ids.map((id) => [id, songs.has(id) || episodes.has(id)]));
 }
 
 export async function like({ id, on }: { id: string; on: boolean }) {
@@ -466,6 +623,55 @@ export async function like({ id, on }: { id: string; on: boolean }) {
 export async function playlists() {
   const body = await api("/api/user/playlist", { uid: me(), limit: 1000 }, { signedIn: true });
   return myPlaylists(list(body.playlist), me());
+}
+
+// ---- Playlist editing ----
+
+const mine: Options = { signedIn: true };
+
+export async function createPlaylist({ name }: { name: string }) {
+  const body = await api("/api/playlist/create", { name, privacy: "0", type: "NORMAL" }, mine);
+  return { ...toPlaylist(body.playlist), mine: true };
+}
+
+export async function renamePlaylist({ id, name }: { id: string; name: string }) {
+  await api("/api/playlist/update/name", { id, name }, mine);
+}
+
+export async function deletePlaylist({ id }: { id: string }) {
+  await api("/api/playlist/remove", { ids: JSON.stringify([id]) }, mine);
+}
+
+// Changes the songs of playlist id. op is NetEase's: add or del.
+async function changeTracks(op: string, id: string, trackIds: string[], options: Options = mine) {
+  await api("/api/playlist/manipulate/tracks", { op, pid: id, trackIds: JSON.stringify(trackIds), imme: "true" }, options);
+}
+
+// NetEase answers 502 to adding a song the playlist already has.
+const ALREADY_THERE = 502;
+
+export async function addToPlaylist({ id, trackIds }: { id: string; trackIds: string[] }) {
+  await changeTracks("add", id, trackIds, { ...mine, codes: [ALREADY_THERE] });
+}
+
+export async function removeFromPlaylist({ id, trackIds }: { id: string; trackIds: string[] }) {
+  await changeTracks("del", id, trackIds);
+}
+
+// items with the one at from taken out and put back in at to.
+export function moved<T>(items: T[], from: number, to: number): T[] {
+  const out = items.slice();
+  out.splice(to, 0, ...out.splice(from, 1));
+  return out;
+}
+
+export async function movePlaylistTrack({ id, from, to }: { id: string; from: number; to: number }) {
+  const { ids } = await playlistDetail(id);
+  await changeTracks("update", id, moved(ids, from, to));
+}
+
+export async function savePlaylist({ id, on }: { id: string; on: boolean }) {
+  await api(`/api/playlist/${on ? "subscribe" : "unsubscribe"}`, { id }, mine);
 }
 
 export async function saveAlbum({ id, on }: { id: string; on: boolean }) {

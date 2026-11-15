@@ -15,7 +15,7 @@ The minimum supported MyGo Music version is listed in [`plugin.json`](plugin.jso
 ## Use
 
 - **Sign in:** scan the QR code with the NetEase Cloud Music app.
-- **Browse and play:** search, albums, artists, playlists, charts and lyrics with translations. Signing in adds daily recommendations, your playlists and saved albums, and likes.
+- **Browse and play:** search with suggestions, albums, artists, playlists, charts, podcasts, lyrics with translations, and comments with Hot Comments first. Signing in adds daily recommendations, your playlists and saved albums, likes, playlist editing, Personal FM and podcast subscriptions.
 - **Quality:** follows the player's quality, falling back to lower levels. Turn on **Prefer Hi-Res** to ask for Hi-Res in place of Lossless.
 - **Language:** follows MyGo Music's English or Simplified Chinese setting.
 

@@ -19,6 +19,8 @@
   "navigation": [
     { "builtin": "home" },
     { "title": "Charts", "page": "charts", "icon": "chart" },
+    { "title": "Personal FM", "builtin": "stations" },
+    { "title": "Podcasts", "builtin": "shows" },
     { "builtin": "savedAlbums" }
   ]
 }
