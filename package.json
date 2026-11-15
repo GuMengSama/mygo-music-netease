@@ -1,0 +1,13 @@
+{
+  "name": "mygo-music-netease",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "1.2.17",
+    "typescript": "5.8.3"
+  }
+}
