@@ -21,3 +21,14 @@
 **Daily Recommendations**: the songs NetEase picks for the Listener each day. They lead Home.
 
 **Liked Songs**: the Listener's 「我喜欢的音乐」 playlist, listed among their playlists. NetEase keeps it itself, so it can't be renamed or deleted.
+
+**Saved Playlist**: someone else's playlist the Listener saved (收藏). They can unsave it but not change it.
+
+**Hot Comments**: the comments NetEase picks out as the best on a Track (精彩评论). They come before the newest comments.
+
+**Personal FM**: NetEase's endless station of songs picked for the Listener (私人 FM).
+
+**Podcast**: a show on NetEase (播客, once 电台), made of Episodes. The Listener can subscribe to it.
+
+**Episode**: one programme of a Podcast. It is not a Track.
+
