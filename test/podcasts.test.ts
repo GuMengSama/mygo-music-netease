@@ -1,6 +1,7 @@
 import { answer, reset, sent } from "./netease";
 import { beforeEach, expect, test } from "bun:test";
-import { toEpisode, toShow } from "../index";
+import { episodeId, isLiked, likeEpisode, search, show, shows, stream, subscribeShow, toEpisode, toShow } from "../index";
+import { storage } from "./host";
 
 beforeEach(() => reset());
 
@@ -25,8 +26,6 @@ test("maps a programme to an Episode", () => {
     album: { id: "3", name: "声音", imageUrl: "https://p1.music.126.net/p.jpg?param={size}y{size}" },
   });
 });
-
-import { episodeId, likeEpisode, search, show, shows, stream, subscribeShow } from "../index";
 
 // The listener's Podcasts are the shows they subscribe to.
 test("lists the listener's Podcasts", async () => {
@@ -94,11 +93,14 @@ test("the listener's Podcasts ask to sign in first", async () => {
 
 // A programme NetEase has no song for can't be played: its Episode is Unavailable.
 test("a programme without its song is unavailable", () => {
-  expect(toEpisode({ id: 7 })).toEqual({ id: "program:7:", duration: 0, album: {}, unavailable: true });
+  expect(toEpisode({ id: 7 })).toEqual({ id: "program:7", duration: 0, album: {}, unavailable: true });
 });
 
-import { storage } from "./host";
-import { isLiked } from "../index";
+// Playing an Episode without a song is refused without asking NetEase.
+test("an Episode without a song won't play", async () => {
+  await expect(stream({ id: "program:7", quality: "standard" })).rejects.toMatchObject({ code: "unavailable" });
+  expect(sent("/api/song/enhance/player/url/v1")).toEqual([]);
+});
 
 // An Episode liked here shows a full heart, and an empty one once unliked again.
 test("an Episode liked here shows liked until unliked", async () => {

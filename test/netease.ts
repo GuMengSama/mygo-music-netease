@@ -12,7 +12,8 @@ const answers = new Map<string, Answer>();
 const cookies = new Map<string, string>();
 export const requests: Request[] = [];
 
-// What NetEase answers to path: an object, or a function of the request's data.
+// What NetEase answers to path: an object, or a function of the request's data,
+// which may answer later.
 export function answer(path: string, a: Answer) {
   answers.set(path, a);
 }
@@ -60,7 +61,7 @@ function decrypt(params: string) {
   if (data.e_r !== false) throw new Error("eapi answers encrypted unless e_r is false");
   requests.push({ path, data, headers: init.headers as Record<string, string> });
   const a = answers.get(path);
-  const body = typeof a === "function" ? a(data) : a ?? { code: 404, message: `no answer for ${path}` };
+  const body = await (typeof a === "function" ? a(data) : a ?? { code: 404, message: `no answer for ${path}` });
   const headers = new Headers({ "content-type": "application/json" });
   if (cookies.has(path)) headers.append("set-cookie", `${cookies.get(path)}; Path=/; HttpOnly`);
   return new Response(JSON.stringify(body), { headers });

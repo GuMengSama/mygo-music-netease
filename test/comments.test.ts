@@ -1,6 +1,6 @@
 import { answer, reset, sent } from "./netease";
 import { beforeEach, expect, test } from "bun:test";
-import { comments, episodeId, firstPage, toComment } from "../index";
+import { comments, episodeId, hotThenNewest, likeComment, postComment, toComment } from "../index";
 
 beforeEach(() => reset());
 
@@ -19,7 +19,7 @@ test("maps a comment", () => {
 
 // Hot Comments come first, and one that's also among the newest shows once.
 test("the first page is Hot Comments, then the newest", () => {
-  const page = firstPage([raw(1, 99), raw(2, 50)], [raw(3), raw(1, 99)]);
+  const page = hotThenNewest([raw(1, 99), raw(2, 50)], [raw(3), raw(1, 99)]);
   expect(page.map((c) => c.id)).toEqual(["1", "2", "3"]);
 });
 
@@ -51,8 +51,6 @@ test("loads an Episode's comments", async () => {
   expect((await comments({ trackId: episodeId("7", "8"), offset: 0 })).comments).toHaveLength(1);
 });
 
-import { likeComment, postComment } from "../index";
-
 // Liking a comment tells NetEase which, in which thread; unliking takes it back.
 test("likes and unlikes a comment", async () => {
   answer("/api/v1/comment/like", { code: 200 });
@@ -68,6 +66,12 @@ test("posts a comment", async () => {
   answer("/api/resource/comments/add", { code: 200, comment: raw(11) });
   expect(await postComment({ trackId: "5", text: "好听" })).toMatchObject({ id: "11", author: "u11" });
   expect(sent("/api/resource/comments/add")[0]).toMatchObject({ threadId: "R_SO_4_5", content: "好听" });
+});
+
+// A comment NetEase doesn't give back wasn't kept: posting it failed.
+test("a comment NetEase doesn't keep fails to post", async () => {
+  answer("/api/resource/comments/add", { code: 200 });
+  await expect(postComment({ trackId: "5", text: "x" })).rejects.toThrow();
 });
 
 // Liking and posting are the listener's: they need signing in.

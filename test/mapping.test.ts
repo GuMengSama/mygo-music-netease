@@ -1,6 +1,6 @@
 import "./host";
 import { expect, test } from "bun:test";
-import { toTrack } from "../index";
+import { myPlaylists, toAlbum, toTrack } from "../index";
 
 const song = {
   id: 1901371647,
@@ -41,8 +41,6 @@ test("marks a song the listener can't play as unavailable", () => {
   expect(toTrack(song, { st: 0, pl: 320000 }).unavailable).toBeUndefined();
 });
 
-import { myPlaylists, toAlbum } from "../index";
-
 // An album's release time becomes the date it came out, in China's time zone.
 test("maps an album with its release date", () => {
   const album = { id: 7, name: "迷跡波", picUrl: "http://p2.music.126.net/x.jpg", artist: { id: 8, name: "MyGO!!!!!" }, publishTime: 1703606400000 };
@@ -65,4 +63,13 @@ test("sorts the listener's playlists into theirs and saved, with Liked Songs fix
     { id: "2", name: "mine", owner: "me", trackCount: 3, imageUrl: "https://p1.music.126.net/c.jpg?param={size}y{size}", mine: true },
     { id: "3", name: "theirs", owner: "them", trackCount: 9, saved: true },
   ]);
+});
+
+// NetEase marks an artist or album it doesn't know with id 0: there's no page to open for it.
+test("an unknown artist or album has no page", () => {
+  expect(toTrack({ id: 1, ar: [{ id: 0, name: "未知" }], al: { id: 0, name: "未知专辑" } })).toMatchObject({
+    artists: [{ id: "", name: "未知" }],
+    album: { name: "未知专辑" },
+  });
+  expect(toTrack({ id: 1, al: { id: 0 } }).album).toEqual({});
 });

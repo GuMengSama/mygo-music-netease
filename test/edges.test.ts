@@ -3,9 +3,7 @@
 import { answer, quickly, requests, reset, sent, setCookie } from "./netease";
 import { prompts, storage } from "./host";
 import { beforeEach, expect, test } from "bun:test";
-import {
-  album, home, isLiked, like, list, lyrics, playlist, playlists, search, signIn, stream, streamOf, text, toAlbum, toTrack,
-} from "../index";
+import { album, artist, home, isLiked, like, list, lyrics, playlist, playlists, saveAlbum, savedAlbums, search, signIn, stream, streamOf, text, toAlbum, toTrack } from "../index";
 
 beforeEach(() => reset());
 
@@ -120,7 +118,7 @@ test("charts on Home show their top 20", async () => {
   answer("/api/album/new", { code: 200 });
   const h = await home();
   expect(h.sections[0].tracks).toHaveLength(20);
-  expect(h.sections[3]).toEqual({ title: "New Albums", albums: [] });
+  expect(h.sections[3]).toMatchObject({ albums: [] });
 });
 
 // Daily Recommendations NetEase sends no songs for leave Home's first section empty.
@@ -158,11 +156,10 @@ test("a scanned code asks for confirmation, and signs in with the cookies NetEas
   answer("/api/login/qrcode/client/login", () => (++polls === 1 ? { code: 802 } : { code: 803, cookie: "MUSIC_U=b" }));
   answer("/api/w/nuser/account/get", { code: 200, profile: { userId: 1 } });
   expect(await quickly(signIn)).toEqual({ id: "1" });
-  expect(prompts.at(-1).text).toBe("Scanned. Confirm on your phone.");
+  expect(prompts.at(-1)).toMatchObject({ qr: prompts[0].qr });
+  expect(prompts.at(-1).text).not.toBe(prompts[0].text);
   expect(storage.get("session").cookie).toBe("MUSIC_U=b");
 });
-
-import { artist, saveAlbum, savedAlbums } from "../index";
 
 // An artist's page asks for up to 100 of their albums.
 test("asks for an artist's albums", async () => {

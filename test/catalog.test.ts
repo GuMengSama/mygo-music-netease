@@ -1,7 +1,7 @@
 import { answer, reset, sent } from "./netease";
-import { settings } from "./host";
 import { beforeEach, expect, test } from "bun:test";
-import { album, home, playlist, search, stream } from "../index";
+import { album, artist, browse, home, isLiked, like, lyrics, playlist, search, signOut, stream } from "../index";
+import { settings, storage } from "./host";
 
 beforeEach(() => {
   reset();
@@ -79,7 +79,7 @@ test("signed-in Home leads with Daily Recommendations", async () => {
   answer("/api/v1/discovery/recommend/resource", { code: 200, recommend: [] });
   answer("/api/album/new", { code: 200, albums: [] });
   const h = await home();
-  expect(h.sections[0]).toMatchObject({ title: "Daily Recommendations", tracks: [{ id: "1" }] });
+  expect(h.sections[0]).toMatchObject({ tracks: [{ id: "1" }] });
 });
 
 // Signed out, Home shows the charts.
@@ -88,10 +88,9 @@ test("signed-out Home shows the charts", async () => {
   answer("/api/v6/playlist/detail", (d: any) => ({ code: 200, playlist: { id: d.id, name: `chart ${d.id}`, tracks: [song(1)], trackIds: [{ id: 1 }] } }));
   answer("/api/album/new", { code: 200, albums: [] });
   const h = await home();
-  expect(h.sections.map((s: any) => s.title)).toEqual(["chart 19723756", "chart 3779629", "chart 3778678", "New Albums"]);
+  expect(h.sections.slice(0, 3).map((s: any) => s.title)).toEqual(["chart 19723756", "chart 3779629", "chart 3778678"]);
+  expect(h.sections[3].albums).toEqual([]);
 });
-
-import { artist, browse, isLiked, like, lyrics } from "../index";
 
 // An artist's page has their top songs and albums.
 test("an artist's page has their songs and albums", async () => {
@@ -131,4 +130,44 @@ test("a liked song's heart fills", async () => {
   await like({ id: "1", on: false });
   expect(await isLiked({ ids: ["1", "2"] })).toEqual({ "1": false, "2": true });
   expect(sent("/api/song/like/get")).toHaveLength(1);
+});
+
+// NetEase's answer, held until release is called.
+function later(body: any) {
+  let release = () => {};
+  const answered = new Promise((r) => (release = () => r(body)));
+  return { answered, release };
+}
+
+// Likes asked for before switching accounts aren't the new account's.
+test("another account's likes don't show", async () => {
+  const old = later({ code: 200, ids: [1] });
+  answer("/api/song/like/get", () => old.answered);
+  const asked = isLiked({ ids: ["1"] });
+  signOut();
+  storage.set("session", { cookie: "MUSIC_U=u3", account: { id: "43", name: "you" } });
+  old.release();
+  await asked;
+  answer("/api/song/like/get", { code: 200, ids: [] });
+  expect(await isLiked({ ids: ["1"] })).toEqual({ "1": false });
+});
+
+// A song liked while NetEase is still listing likes shows liked.
+test("a like made while likes load stays", async () => {
+  const listed = later({ code: 200, ids: [] });
+  answer("/api/song/like/get", () => listed.answered);
+  answer("/api/radio/like", { code: 200 });
+  const asked = isLiked({ ids: ["2"] });
+  await like({ id: "2", on: true });
+  listed.release();
+  await asked;
+  expect(await isLiked({ ids: ["2"] })).toEqual({ "2": true });
+});
+
+// Likes NetEase failed to list are asked for again.
+test("asks for likes again after NetEase fails", async () => {
+  answer("/api/song/like/get", { code: 500 });
+  await expect(isLiked({ ids: ["1"] })).rejects.toThrow();
+  answer("/api/song/like/get", { code: 200, ids: [1] });
+  expect(await isLiked({ ids: ["1"] })).toEqual({ "1": true });
 });

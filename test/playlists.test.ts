@@ -1,6 +1,6 @@
 import { answer, reset, sent } from "./netease";
 import { beforeEach, expect, test } from "bun:test";
-import { createPlaylist, deletePlaylist, renamePlaylist } from "../index";
+import { addToPlaylist, createPlaylist, deletePlaylist, moved, movePlaylistTrack, removeFromPlaylist, renamePlaylist, savePlaylist } from "../index";
 
 beforeEach(() => reset());
 
@@ -33,8 +33,6 @@ test("editing asks to sign in first", async () => {
   await expect(deletePlaylist({ id: "1" })).rejects.toMatchObject({ code: "signIn" });
 });
 
-import { addToPlaylist, removeFromPlaylist } from "../index";
-
 // Adding songs puts them in the playlist at once.
 test("adds songs to a playlist", async () => {
   answer("/api/playlist/manipulate/tracks", { code: 200 });
@@ -60,8 +58,6 @@ test("removing fails as NetEase says", async () => {
   answer("/api/playlist/manipulate/tracks", { code: 502, message: "x" });
   await expect(removeFromPlaylist({ id: "77", trackIds: ["1"] })).rejects.toThrow("x (502)");
 });
-
-import { movePlaylistTrack, moved, savePlaylist } from "../index";
 
 // Moving takes a song out and puts it back in at its new place.
 test("moves an item from one place to another", () => {

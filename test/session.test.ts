@@ -1,7 +1,7 @@
-import { answer, reset, setCookie } from "./netease";
-import { storage } from "./host";
+import { answer, quickly, reset, setCookie } from "./netease";
+import { prompts, storage } from "./host";
 import { beforeEach, expect, test } from "bun:test";
-import { account, playlists } from "../index";
+import { account, playlists, signIn } from "../index";
 
 beforeEach(() => reset());
 
@@ -31,10 +31,6 @@ test("asks to sign in before reaching the listener's own things", async () => {
   reset(false);
   await expect(playlists()).rejects.toMatchObject({ code: "signIn" });
 });
-
-import { prompts } from "./host";
-import { signIn } from "../index";
-import { quickly } from "./netease";
 
 // Scanning the QR code signs the listener in, as the account NetEase names.
 test("signs in by QR code", async () => {

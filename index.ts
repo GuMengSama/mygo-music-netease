@@ -4,17 +4,8 @@
 declare const host: any;
 
 // The app's shapes, as internal/music/music.go names them in JSON.
-type Section = {
-  title?: string;
-  tracks?: any[];
-  albums?: any[];
-  playlists?: any[];
-  shows?: any[];
-  stations?: any[];
-  morePage?: string;
-  empty?: string;
-};
-type Browse = { title?: string; subtitle?: string; sections: Section[] };
+type Section = { title?: string; tracks?: any[]; albums?: any[]; playlists?: any[] };
+type Browse = { title?: string; sections: Section[] };
 
 const EAPI_KEY = "e82ckenh8dichen8";
 
@@ -39,15 +30,16 @@ export function levelsFor(quality: string, preferHiRes: boolean): string[] {
 
 // What an id the app hands back names: a song, or an Episode, which is a
 // programme playing a song of its own.
-export type Ref = { kind: "song"; id: string } | { kind: "episode"; programId: string; songId: string };
+// An Episode NetEase has no song for has none: it can't be played.
+export type Ref = { kind: "song"; id: string } | { kind: "episode"; programId: string; songId: string | null };
 
-export function episodeId(programId: string, songId: string): string {
-  return `program:${programId}:${songId}`;
+export function episodeId(programId: string, songId: string | null): string {
+  return songId ? `program:${programId}:${songId}` : `program:${programId}`;
 }
 
 export function refOf(id: string): Ref {
   const [kind, programId, songId] = String(id).split(":");
-  return kind === "program" ? { kind: "episode", programId, songId } : { kind: "song", id };
+  return kind === "program" ? { kind: "episode", programId, songId: songId || null } : { kind: "song", id };
 }
 
 // Where a song's or an Episode's comments are: its thread, and its id in it.
@@ -73,8 +65,14 @@ export function text(x: any): string {
   return typeof x === "string" ? x : "";
 }
 
+// The id of an artist, album or show NetEase names, or none when it doesn't
+// know it: NetEase gives those id 0, and there's no page to open for them.
+function idOf(x: any): string {
+  return x ? String(x) : "";
+}
+
 function toArtistRef(a: any) {
-  return { id: String(a.id), name: text(a.name) };
+  return { id: idOf(a.id), name: text(a.name) };
 }
 
 // A Track from a song in either of NetEase's shapes, with the privilege that
@@ -93,7 +91,7 @@ export function toTrack(song: any, privilege: any = song.privilege) {
 
 // The album a song is on, as the song names it.
 function albumRefOf(al: any) {
-  return compact({ id: String(al.id ?? ""), name: text(al.name), imageUrl: imageOf(al.picUrl) });
+  return compact({ id: idOf(al.id), name: text(al.name), imageUrl: imageOf(al.picUrl) });
 }
 
 // Whether a privilege lets the listener play the song: one that's delisted, or
@@ -181,17 +179,17 @@ export function toShow(r: any) {
   });
 }
 
-// An Episode from a NetEase programme: a Track of its Podcast, playing the
-// programme's own song.
+// An Episode from a NetEase programme. It isn't a Track, but the app takes it
+// in a Track's shape, of its Podcast, playing the programme's own song.
 export function toEpisode(p: any) {
-  const song = String(p.mainSong?.id ?? "");
+  const song = p.mainSong?.id ? String(p.mainSong.id) : null;
   const radio = p.radio ?? {};
   return compact({
     id: episodeId(String(p.id), song),
     name: text(p.name),
     duration: p.duration ?? 0,
     album: albumRefOf({ id: radio.id, name: radio.name, picUrl: p.coverUrl }),
-    showId: String(radio.id ?? ""),
+    showId: idOf(radio.id),
     description: p.description,
     published: dateOf(p.createTime),
     unavailable: song ? undefined : true,
@@ -201,17 +199,16 @@ export function toEpisode(p: any) {
 // Liked Songs is NetEase's playlist of special type 5.
 const isLikedSongs = (p: any) => p.specialType === 5;
 
-// The listener's playlists, theirs or saved. Liked Songs is theirs, but kept
-// by NetEase.
+// Whose playlist p is to the listener me: theirs, or saved if they saved it.
+// Liked Songs is theirs, but kept by NetEase.
+function ownership(p: any, me: string, saved: boolean): { mine?: true; fixed?: true; saved?: true } {
+  if (!me || String(p.creator?.userId) !== me) return saved ? { saved: true } : {};
+  return isLikedSongs(p) ? { mine: true, fixed: true } : { mine: true };
+}
+
+// The listener's playlists: every one listed that isn't theirs, they saved.
 export function myPlaylists(list: any[], me: string) {
-  return list.map((p) => {
-    const pl: any = toPlaylist(p);
-    if (String(p.creator?.userId) === me) {
-      pl.mine = true;
-      if (isLikedSongs(p)) pl.fixed = true;
-    } else pl.saved = true;
-    return pl;
-  });
+  return list.map((p) => ({ ...toPlaylist(p), ...ownership(p, me, true) }));
 }
 
 // ---- Talking to NetEase ----
@@ -249,21 +246,24 @@ function deviceId(): string {
 
 type Session = { cookie: string; account: { id: string; name: string; imageUrl?: string } };
 const session = (): Session | null => host.storage.get("session") ?? null;
-let likedIds: Set<string> | null = null;
 
 function forget() {
   host.storage.remove("session");
-  likedIds = null;
+  likedSongs.forget();
 }
 
 type Options = { cookie?: string; codes?: number[]; signedIn?: boolean };
+
+// For the listener's own things, which need a Session.
+const SIGNED_IN: Options = { signedIn: true };
+const signInFirst = () => fail("signIn", "Sign in to NetEase Cloud Music first.");
 
 // Whose cookies a request goes with: the Session's, which NetEase may renew or
 // end, or those of a sign-in still under way, which belong to no Session yet.
 function cookiesFor(options: Options): { cookies: Record<string, string>; session: Session | null } {
   if (options.cookie !== undefined) return { cookies: cookieMap(options.cookie), session: null };
   const s = session();
-  if (options.signedIn && !s) throw fail("signIn", "Sign in to NetEase Cloud Music first.");
+  if (options.signedIn && !s) throw signInFirst();
   return { cookies: cookieMap(s?.cookie), session: s };
 }
 
@@ -358,11 +358,14 @@ function tracksFrom(songs: any[] = [], privileges: any[] = []) {
   return songs.map((s) => toTrack(s, byId.get(String(s.id)) ?? s.privilege));
 }
 
-// Tracks for song ids, with their privileges, a few hundred at a time.
+// The most songs NetEase details in one request.
+const DETAIL_BATCH = 500;
+
+// Tracks for song ids, with their privileges, a batch at a time.
 async function tracksOf(ids: string[]) {
   const out: any[] = [];
-  for (let i = 0; i < ids.length; i += 500) {
-    const batch = ids.slice(i, i + 500);
+  for (let i = 0; i < ids.length; i += DETAIL_BATCH) {
+    const batch = ids.slice(i, i + DETAIL_BATCH);
     const body = await api("/api/v3/song/detail", { c: JSON.stringify(batch.map((id) => ({ id }))) });
     out.push(...tracksFrom(body.songs, body.privileges));
   }
@@ -402,7 +405,7 @@ async function startSession(jar: string) {
   if (!profile) throw fail("signIn", "NetEase didn't finish signing in. Try again.");
   const account = compact({ id: String(profile.userId), name: text(profile.nickname), imageUrl: imageOf(profile.avatarUrl) });
   host.storage.set("session", { cookie: jar, account });
-  likedIds = null;
+  likedSongs.forget();
   return account;
 }
 
@@ -474,15 +477,9 @@ export async function playlist({ id }: { id: string }) {
   const tracks = tracksFrom(p.tracks, body.privileges);
   // NetEase sends the first thousand or so songs whole, and only ids after.
   tracks.push(...(await tracksOf(ids.slice(tracks.length))));
-  const out: any = { ...toPlaylist(p), tracks };
-  if (me() && String(p.creator?.userId) === me()) {
-    out.mine = true;
-    if (isLikedSongs(p)) {
-      out.fixed = true;
-      // Opening Liked Songs picks up songs liked elsewhere, as on the phone.
-      likedIds = new Set(ids);
-    }
-  } else if (p.subscribed) out.saved = true;
+  const out = { ...toPlaylist(p), tracks, ...ownership(p, me(), !!p.subscribed) };
+  // Opening Liked Songs picks up songs liked elsewhere, as on the phone.
+  if (out.fixed) likedSongs.know(ids);
   return out;
 }
 
@@ -492,14 +489,14 @@ export async function lyrics({ id }: { id: string }) {
 }
 
 // The song an id plays: its own, or an Episode's programme's.
-function songOf(id: string): string {
+function songOf(id: string): string | null {
   const ref = refOf(id);
   return ref.kind === "song" ? ref.id : ref.songId;
 }
 
 export async function stream({ id, quality }: { id: string; quality: string }) {
   const song = songOf(id);
-  for (const level of levelsFor(quality, host.setting("preferHiRes") === "true")) {
+  for (const level of song ? levelsFor(quality, host.setting("preferHiRes") === "true") : []) {
     const body = await api("/api/song/enhance/player/url/v1", { ids: JSON.stringify([song]), level, encodeType: "flac" });
     const s = streamOf(list(body.data).find((x: any) => String(x.id) === song));
     if (s) return s;
@@ -510,18 +507,18 @@ export async function stream({ id, quality }: { id: string; quality: string }) {
 // ---- Personal FM ----
 
 export async function stations() {
-  if (!session()) throw fail("signIn", "Sign in to NetEase Cloud Music first.");
+  if (!session()) throw signInFirst();
   return [{ id: "fm", name: host.t("Personal FM"), description: host.t("Songs NetEase picks for you, one after another") }];
 }
 
 export async function stationNext(_: { id: string }) {
-  return tracksFrom((await api("/api/v1/radio/get", {}, mine)).data);
+  return tracksFrom((await api("/api/v1/radio/get", {}, SIGNED_IN)).data);
 }
 
 // ---- Podcasts ----
 
 export async function shows() {
-  return list((await api("/api/djradio/get/subed", { limit: 1000 }, mine)).djRadios).map(toShow);
+  return list((await api("/api/djradio/get/subed", { limit: 1000 }, SIGNED_IN)).djRadios).map(toShow);
 }
 
 export async function show({ id, offset = 0 }: { id: string; offset?: number }) {
@@ -533,12 +530,12 @@ export async function show({ id, offset = 0 }: { id: string; offset?: number }) 
 }
 
 export async function subscribeShow({ id, on }: { id: string; on: boolean }) {
-  await api(`/api/djradio/${on ? "sub" : "unsub"}`, { id }, mine);
+  await api(`/api/djradio/${on ? "sub" : "unsub"}`, { id }, SIGNED_IN);
 }
 
 export async function likeEpisode({ id, on }: { id: string; on: boolean }) {
   const { thread } = commentsOf(refOf(id));
-  await api(`/api/resource/${on ? "like" : "unlike"}`, { threadId: thread }, mine);
+  await api(`/api/resource/${on ? "like" : "unlike"}`, { threadId: thread }, SIGNED_IN);
   const liked = likedEpisodes();
   if (on) liked.add(id);
   else liked.delete(id);
@@ -553,8 +550,7 @@ const likedEpisodes = () => new Set<string>(list(host.storage.get(likedEpisodesK
 // ---- Comments ----
 
 export function toComment(c: any) {
-  return compact({
-    id: String(c.commentId),
+  const extras = compact({
     author: text(c.user?.nickname),
     avatarUrl: imageOf(c.user?.avatarUrl),
     text: text(c.content),
@@ -562,12 +558,13 @@ export function toComment(c: any) {
     likes: c.likedCount,
     liked: !!c.liked,
   });
+  return { id: String(c.commentId), ...extras };
 }
 
 // Hot Comments, then the newest, each once.
-export function firstPage(hot: any[], newest: any[]) {
+export function hotThenNewest(hot: any[], newest: any[]) {
   const seen = new Set<string>();
-  return [...hot, ...newest].map(toComment).filter((c) => !seen.has(c.id!) && !!seen.add(c.id!));
+  return [...hot, ...newest].map(toComment).filter((c) => !seen.has(c.id) && !!seen.add(c.id));
 }
 
 const COMMENT_PAGE = 20;
@@ -580,70 +577,89 @@ export async function comments({ trackId, offset = 0 }: { trackId: string; offse
   // as far back as they could have taken, and let it pass over repeats.
   const newestOffset = offset && Math.max(0, offset - HOT_MAX);
   const body = await api(`/api/v1/resource/comments/${thread}`, { rid, offset: newestOffset, limit: COMMENT_PAGE });
-  const page = offset === 0 ? firstPage(list(body.hotComments), list(body.comments)) : list(body.comments).map(toComment);
+  const page = offset === 0 ? hotThenNewest(list(body.hotComments), list(body.comments)) : list(body.comments).map(toComment);
   return { comments: page, total: body.total, more: !!body.more };
 }
 
 export async function likeComment({ trackId, commentId, on }: { trackId: string; commentId: string; on: boolean }) {
   const { thread } = commentsOf(refOf(trackId));
-  await api(`/api/v1/comment/${on ? "like" : "unlike"}`, { threadId: thread, commentId }, mine);
+  await api(`/api/v1/comment/${on ? "like" : "unlike"}`, { threadId: thread, commentId }, SIGNED_IN);
 }
 
 export async function postComment({ trackId, text: content }: { trackId: string; text: string }) {
   const { thread } = commentsOf(refOf(trackId));
-  const body = await api("/api/resource/comments/add", { threadId: thread, content }, mine);
-  return toComment(body.comment ?? {});
+  const body = await api("/api/resource/comments/add", { threadId: thread, content }, SIGNED_IN);
+  if (!body.comment) throw new Error(host.t("NetEase didn't keep the comment."));
+  return toComment(body.comment);
 }
 
 // ---- Library ----
 
-async function likedSet(): Promise<Set<string>> {
-  if (!likedIds) {
-    const body = await api("/api/song/like/get", { uid: me() }, { signedIn: true });
-    likedIds = new Set(list(body.ids).map(String));
-  }
-  return likedIds;
-}
+// The songs the signed-in listener likes, asked of NetEase once and kept for
+// them alone. Only these change what's kept: a like made while NetEase is
+// still answering applies after its answer.
+const likedSongs = (() => {
+  let kept: { uid: string; ids: Promise<Set<string>> } | null = null;
+  const ask = (uid: string) =>
+    api("/api/song/like/get", { uid }, SIGNED_IN).then(
+      (body) => new Set(list(body.ids).map(String)),
+      (e) => {
+        if (kept?.uid === uid) kept = null;
+        throw e;
+      },
+    );
+  return {
+    get(): Promise<Set<string>> {
+      const uid = me();
+      if (kept?.uid !== uid) kept = { uid, ids: ask(uid) };
+      return kept.ids;
+    },
+    know(ids: string[]) {
+      kept = { uid: me(), ids: Promise.resolve(new Set(ids)) };
+    },
+    change(id: string, on: boolean) {
+      if (kept?.uid !== me()) return;
+      kept.ids = kept.ids.then((ids) => (on ? ids.add(id) : ids.delete(id), ids));
+    },
+    forget() {
+      kept = null;
+    },
+  };
+})();
 
 export async function isLiked({ ids }: { ids: string[] }) {
-  const songs = await likedSet();
+  const songs = await likedSongs.get();
   const episodes = likedEpisodes();
   return Object.fromEntries(ids.map((id) => [id, songs.has(id) || episodes.has(id)]));
 }
 
 export async function like({ id, on }: { id: string; on: boolean }) {
-  await api("/api/radio/like", { trackId: id, like: on, alg: "itembased", time: "3" }, { signedIn: true });
-  if (likedIds) {
-    // NetEase lists the newest first.
-    likedIds.delete(String(id));
-    if (on) likedIds = new Set([String(id), ...likedIds]);
-  }
+  await api("/api/radio/like", { trackId: id, like: on, alg: "itembased", time: "3" }, SIGNED_IN);
+  likedSongs.change(String(id), on);
 }
 
 export async function playlists() {
-  const body = await api("/api/user/playlist", { uid: me(), limit: 1000 }, { signedIn: true });
+  const body = await api("/api/user/playlist", { uid: me(), limit: 1000 }, SIGNED_IN);
   return myPlaylists(list(body.playlist), me());
 }
 
 // ---- Playlist editing ----
 
-const mine: Options = { signedIn: true };
-
 export async function createPlaylist({ name }: { name: string }) {
-  const body = await api("/api/playlist/create", { name, privacy: "0", type: "NORMAL" }, mine);
+  const body = await api("/api/playlist/create", { name, privacy: "0", type: "NORMAL" }, SIGNED_IN);
   return { ...toPlaylist(body.playlist), mine: true };
 }
 
 export async function renamePlaylist({ id, name }: { id: string; name: string }) {
-  await api("/api/playlist/update/name", { id, name }, mine);
+  await api("/api/playlist/update/name", { id, name }, SIGNED_IN);
 }
 
 export async function deletePlaylist({ id }: { id: string }) {
-  await api("/api/playlist/remove", { ids: JSON.stringify([id]) }, mine);
+  await api("/api/playlist/remove", { ids: JSON.stringify([id]) }, SIGNED_IN);
 }
 
 // Changes the songs of playlist id. op is NetEase's: add or del.
-async function changeTracks(op: string, id: string, trackIds: string[], options: Options = mine) {
+async function changeTracks(op: string, id: string, trackIds: string[], options: Options = SIGNED_IN) {
   await api("/api/playlist/manipulate/tracks", { op, pid: id, trackIds: JSON.stringify(trackIds), imme: "true" }, options);
 }
 
@@ -651,7 +667,7 @@ async function changeTracks(op: string, id: string, trackIds: string[], options:
 const ALREADY_THERE = 502;
 
 export async function addToPlaylist({ id, trackIds }: { id: string; trackIds: string[] }) {
-  await changeTracks("add", id, trackIds, { ...mine, codes: [ALREADY_THERE] });
+  await changeTracks("add", id, trackIds, { ...SIGNED_IN, codes: [ALREADY_THERE] });
 }
 
 export async function removeFromPlaylist({ id, trackIds }: { id: string; trackIds: string[] }) {
@@ -671,25 +687,27 @@ export async function movePlaylistTrack({ id, from, to }: { id: string; from: nu
 }
 
 export async function savePlaylist({ id, on }: { id: string; on: boolean }) {
-  await api(`/api/playlist/${on ? "subscribe" : "unsubscribe"}`, { id }, mine);
+  await api(`/api/playlist/${on ? "subscribe" : "unsubscribe"}`, { id }, SIGNED_IN);
 }
 
 export async function saveAlbum({ id, on }: { id: string; on: boolean }) {
-  await api(`/api/album/${on ? "sub" : "unsub"}`, { id }, { signedIn: true });
+  await api(`/api/album/${on ? "sub" : "unsub"}`, { id }, SIGNED_IN);
 }
 
 export async function savedAlbums({ offset = 0 }: { offset?: number }) {
-  const body = await api("/api/album/sublist", { offset, limit: PAGE }, { signedIn: true });
+  const body = await api("/api/album/sublist", { offset, limit: PAGE }, SIGNED_IN);
   return { albums: list(body.data).map((a: any) => ({ ...toAlbum(a), saved: true })), more: !!body.hasMore };
 }
 
 // ---- Pages ----
 
-// NetEase's best-known Charts: 飙升, 新歌 and 热歌.
+// NetEase's best-known Charts: 飙升, 新歌 and 热歌, and how many songs of each Home shows.
 const TOP_CHARTS = ["19723756", "3779629", "3778678"];
+const CHART_SONGS = 20;
+const NEW_ALBUMS = 12;
 
 async function newAlbums(): Promise<Section> {
-  const body = await api("/api/album/new", { area: "ALL", limit: 12 });
+  const body = await api("/api/album/new", { area: "ALL", limit: NEW_ALBUMS });
   return { title: host.t("New Albums"), albums: list(body.albums).map(toAlbum) };
 }
 
@@ -713,7 +731,7 @@ export async function home(): Promise<Browse> {
   return {
     title: host.t("Home"),
     sections: [
-      ...charts.map((c) => ({ title: c.name, tracks: c.tracks.slice(0, 20) })),
+      ...charts.map((c) => ({ title: c.name, tracks: c.tracks.slice(0, CHART_SONGS) })),
       await newAlbums(),
     ],
   };
