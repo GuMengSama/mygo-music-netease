@@ -1,6 +1,6 @@
 import { answer, reset, sent } from "./netease";
 import { beforeEach, expect, test } from "bun:test";
-import { addToPlaylist, createPlaylist, deletePlaylist, moved, movePlaylistTrack, removeFromPlaylist, renamePlaylist, savePlaylist } from "../index";
+import { addToPlaylist, createPlaylist, deletePlaylist, movePlaylistTrack, removeFromPlaylist, renamePlaylist, savePlaylist } from "../index";
 
 beforeEach(() => reset());
 
@@ -65,11 +65,19 @@ test("removing fails as NetEase says", async () => {
   await expect(removeFromPlaylist({ id: "77", trackIds: ["1"] })).rejects.toThrow("x (502)");
 });
 
-// Moving takes a song out and puts it back in at its new place.
-test("moves an item from one place to another", () => {
-  expect(moved(["a", "b", "c", "d"], 0, 2)).toEqual(["b", "c", "a", "d"]);
-  expect(moved(["a", "b", "c", "d"], 3, 1)).toEqual(["a", "d", "b", "c"]);
-  expect(moved(["a", "b"], 1, 0)).toEqual(["b", "a"]);
+// The order NetEase is given for moving a song of playlist 77, ids 1 to 4, from one place to another.
+async function orderAfterMoving(from: number, to: number) {
+  answer("/api/v6/playlist/detail", { code: 200, playlist: { id: 77, trackIds: [1, 2, 3, 4].map((id) => ({ id })) } });
+  answer("/api/playlist/manipulate/tracks", { code: 200 });
+  await movePlaylistTrack({ id: "77", from, to });
+  return JSON.parse(sent("/api/playlist/manipulate/tracks").at(-1)!.trackIds);
+}
+
+// Moving takes a song out and puts it back in at its new place, down or up.
+test("moves a song down or up", async () => {
+  expect(await orderAfterMoving(0, 2)).toEqual(["2", "3", "1", "4"]);
+  expect(await orderAfterMoving(3, 1)).toEqual(["1", "4", "2", "3"]);
+  expect(await orderAfterMoving(1, 0)).toEqual(["2", "1", "3", "4"]);
 });
 
 // Moving a song gives NetEase the playlist's whole new order.

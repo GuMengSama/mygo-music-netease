@@ -1,6 +1,6 @@
 import { answer, reset, sent } from "./netease";
 import { beforeEach, expect, test } from "bun:test";
-import { comments, episodeId, hotThenNewest, likeComment, postComment, toComment } from "../index";
+import { comments, likeComment, postComment } from "../index";
 
 beforeEach(() => reset());
 
@@ -9,17 +9,23 @@ const raw = (id: number, likes = 0) => ({
   user: { nickname: `u${id}`, avatarUrl: "http://p1.music.126.net/u.jpg" },
 });
 
-// A comment as NetEase sends it becomes the app's, its author's picture sized by the app.
-test("maps a comment", () => {
-  expect(toComment({ ...raw(1, 9), liked: true })).toEqual({
+// A song's comments, page 0, NetEase answering with these.
+async function firstPage(hotComments: object[], newest: object[]) {
+  answer("/api/v1/resource/comments/R_SO_4_5", { code: 200, hotComments, comments: newest });
+  return (await comments({ trackId: "5", offset: 0 })).comments;
+}
+
+// A comment as NetEase sends it shows in the app, its author's picture sized by the app.
+test("shows a comment", async () => {
+  expect(await firstPage([], [{ ...raw(1, 9), liked: true }])).toEqual([{
     id: "1", author: "u1", avatarUrl: "https://p1.music.126.net/u.jpg?param={size}y{size}",
     text: "c1", time: 1700000000001, likes: 9, liked: true,
-  });
+  }]);
 });
 
 // Hot Comments come first, and one that's also among the newest shows once.
-test("the first page is Hot Comments, then the newest", () => {
-  const page = hotThenNewest([raw(1, 99), raw(2, 50)], [raw(3), raw(1, 99)]);
+test("the first page is Hot Comments, then the newest", async () => {
+  const page = await firstPage([raw(1, 99), raw(2, 50)], [raw(3), raw(1, 99)]);
   expect(page.map((c) => c.id)).toEqual(["1", "2", "3"]);
 });
 
@@ -48,7 +54,7 @@ test("a page just past the first starts the newest from the top", async () => {
 // An Episode's comments are its programme's.
 test("loads an Episode's comments", async () => {
   answer("/api/v1/resource/comments/A_DJ_1_7", { code: 200, comments: [raw(4)] });
-  expect((await comments({ trackId: episodeId("7", "8"), offset: 0 })).comments).toHaveLength(1);
+  expect((await comments({ trackId: "program:7:8", offset: 0 })).comments).toHaveLength(1);
 });
 
 // Liking a comment tells NetEase which, in which thread; unliking takes it back.
@@ -56,7 +62,7 @@ test("likes and unlikes a comment", async () => {
   answer("/api/v1/comment/like", { code: 200 });
   answer("/api/v1/comment/unlike", { code: 200 });
   await likeComment({ trackId: "5", commentId: "1", on: true });
-  await likeComment({ trackId: episodeId("7", "8"), commentId: "2", on: false });
+  await likeComment({ trackId: "program:7:8", commentId: "2", on: false });
   expect(sent("/api/v1/comment/like")[0]).toMatchObject({ threadId: "R_SO_4_5", commentId: "1" });
   expect(sent("/api/v1/comment/unlike")[0]).toMatchObject({ threadId: "A_DJ_1_7", commentId: "2" });
 });
@@ -82,8 +88,8 @@ test("liking and posting ask to sign in first", async () => {
 });
 
 // A comment whose author is gone has no name or picture.
-test("a comment without its author", () => {
-  expect(toComment({ commentId: 1, content: "c" })).toEqual({ id: "1", text: "c", liked: false });
+test("a comment without its author", async () => {
+  expect(await firstPage([], [{ commentId: 1, content: "c" }])).toEqual([{ id: "1", text: "c", liked: false }]);
 });
 
 // Asked with no offset, comments start at the first page.

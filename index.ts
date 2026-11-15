@@ -98,7 +98,7 @@ type NBody = { code?: number; message?: string; msg?: string };
 const EAPI_KEY = "e82ckenh8dichen8";
 
 // What eapi wants posted as params for a request to path with text as its body.
-export function eapiParams(path: string, text: string): string {
+function eapiParams(path: string, text: string): string {
   const digest = host.crypto.md5(`nobody${path}use${text}md5forencrypt`);
   const message = `${path}-36cd479b6b5-${text}-36cd479b6b5-${digest}`;
   return host.crypto.aesEcbEncrypt(EAPI_KEY, message).toUpperCase();
@@ -110,7 +110,7 @@ const LEVEL_FOR_QUALITY: Record<string, string> = { standard: "standard", high: 
 
 // The levels to try for the app's quality, best first: the one asked for, then
 // each below it. Prefer Hi-Res puts Hi-Res above Lossless.
-export function levelsFor(quality: string, preferHiRes: boolean): string[] {
+function levelsFor(quality: string, preferHiRes: boolean): string[] {
   let top = LEVEL_FOR_QUALITY[quality] ?? "exhigh";
   if (top === "lossless" && preferHiRes) top = "hires";
   return LEVELS.slice(0, LEVELS.indexOf(top) + 1).reverse();
@@ -119,39 +119,39 @@ export function levelsFor(quality: string, preferHiRes: boolean): string[] {
 // What an id the app hands back names: a song, or an Episode, which is a
 // programme playing a song of its own.
 // An Episode NetEase has no song for has none: it can't be played.
-export type Ref = { kind: "song"; id: string } | { kind: "episode"; programId: string; songId: string | null };
+type Ref = { kind: "song"; id: string } | { kind: "episode"; programId: string; songId: string | null };
 
-export function episodeId(programId: string, songId: string | null): string {
+function episodeId(programId: string, songId: string | null): string {
   return songId ? `program:${programId}:${songId}` : `program:${programId}`;
 }
 
-export function refOf(id: string): Ref {
+function refOf(id: string): Ref {
   const [kind, programId, songId] = String(id).split(":");
   return kind === "program" ? { kind: "episode", programId, songId: songId || null } : { kind: "song", id };
 }
 
 // Where a song's or an Episode's comments are: its thread, and its id in it.
-export function commentsOf(ref: Ref): { thread: string; rid: string } {
+function commentsOf(ref: Ref): { thread: string; rid: string } {
   return ref.kind === "song"
     ? { thread: `R_SO_4_${ref.id}`, rid: ref.id }
     : { thread: `A_DJ_1_${ref.programId}`, rid: ref.programId };
 }
 
 // An image the app asks for at the size it shows it, from NetEase's CDN.
-export function imageOf(url?: string): string | undefined {
+function imageOf(url?: string): string | undefined {
   if (!url) return undefined;
   return `${url.replace(/^http:/, "https:")}?param={size}y{size}`;
 }
 
 // A list NetEase sent, or none when it left it out.
-export function list<T>(x: T[] | undefined): T[];
-export function list(x: unknown): unknown[];
-export function list(x: unknown): unknown[] {
+function list<T>(x: T[] | undefined): T[];
+function list(x: unknown): unknown[];
+function list(x: unknown): unknown[] {
   return Array.isArray(x) ? x : [];
 }
 
 // Text NetEase sent, or none when it left it out.
-export function text(x: unknown): string {
+function text(x: unknown): string {
   return typeof x === "string" ? x : "";
 }
 
@@ -167,7 +167,7 @@ function toArtistRef(a: NArtist): Artist {
 
 // A Track from a song in either of NetEase's shapes, with the privilege that
 // says whether the listener can play it, if NetEase sent one.
-export function toTrack(song: NSong, privilege: NPrivilege | undefined = song.privilege): Track {
+function toTrack(song: NSong, privilege: NPrivilege | undefined = song.privilege): Track {
   const track: Track = {
     id: String(song.id),
     name: text(song.name),
@@ -206,7 +206,7 @@ const APP_QUALITY: Record<string, string> = { hires: "lossless", lossless: "loss
 
 // What the app plays for one item of NetEase's song URLs, or null when there's
 // no whole song at this level: no URL, or only a Trial Clip.
-export function streamOf(item: NSongUrl | undefined): Stream | null {
+function streamOf(item: NSongUrl | undefined): Stream | null {
   if (!item?.url || item.freeTrialInfo) return null;
   return {
     url: String(item.url),
@@ -231,7 +231,7 @@ function compact<T extends object>(o: T): Partial<T> {
   return out;
 }
 
-export function toAlbum(a: NAlbum): Album {
+function toAlbum(a: NAlbum): Album {
   return {
     id: String(a.id),
     ...compact({
@@ -243,11 +243,11 @@ export function toAlbum(a: NAlbum): Album {
   };
 }
 
-export function toArtist(a: NArtist) {
+function toArtist(a: NArtist) {
   return { id: String(a.id), ...compact({ name: text(a.name), imageUrl: imageOf(a.picUrl ?? a.img1v1Url) }) };
 }
 
-export function toPlaylist(p: NPlaylist): Playlist {
+function toPlaylist(p: NPlaylist): Playlist {
   return {
     id: String(p.id),
     ...compact({
@@ -261,7 +261,7 @@ export function toPlaylist(p: NPlaylist): Playlist {
 }
 
 // A Podcast from a NetEase show.
-export function toShow(r: NRadio): Show {
+function toShow(r: NRadio): Show {
   return {
     id: String(r.id),
     subscribed: !!r.subed,
@@ -277,7 +277,7 @@ export function toShow(r: NRadio): Show {
 
 // An Episode from a NetEase programme. It isn't a Track, but the app takes it
 // in a Track's shape, of its Podcast, playing the programme's own song.
-export function toEpisode(p: NProgram): Track {
+function toEpisode(p: NProgram): Track {
   const song = p.mainSong?.id ? String(p.mainSong.id) : null;
   const radio = p.radio ?? {};
   return {
@@ -305,7 +305,7 @@ function ownership(p: NPlaylist, me: string, saved: boolean): { mine?: true; fix
 }
 
 // The listener's playlists: every one listed that isn't theirs, they saved.
-export function myPlaylists(list: NPlaylist[], me: string): Playlist[] {
+function myPlaylists(list: NPlaylist[], me: string): Playlist[] {
   return list.map((p) => ({ ...toPlaylist(p), ...ownership(p, me, true) }));
 }
 
@@ -653,7 +653,7 @@ const likedEpisodes = () => new Set(list(host.storage.get(likedEpisodesKey())).m
 
 // ---- Comments ----
 
-export function toComment(c: NComment): Comment {
+function toComment(c: NComment): Comment {
   const extras = compact({
     author: text(c.user?.nickname),
     avatarUrl: imageOf(c.user?.avatarUrl),
@@ -665,7 +665,7 @@ export function toComment(c: NComment): Comment {
 }
 
 // Hot Comments, then the newest, each once.
-export function hotThenNewest(hot: NComment[], newest: NComment[]): Comment[] {
+function hotThenNewest(hot: NComment[], newest: NComment[]): Comment[] {
   const seen = new Set<string>();
   return [...hot, ...newest].map(toComment).filter((c) => !seen.has(c.id) && !!seen.add(c.id));
 }
@@ -779,7 +779,7 @@ export async function removeFromPlaylist({ id, trackIds }: { id: string; trackId
 }
 
 // items with the one at from taken out and put back in at to.
-export function moved<T>(items: T[], from: number, to: number): T[] {
+function moved<T>(items: T[], from: number, to: number): T[] {
   const out = items.slice();
   out.splice(to, 0, ...out.splice(from, 1));
   return out;

@@ -1,7 +1,7 @@
 // A fake NetEase behind fetch: it decrypts each eapi request, keeps it, and
 // answers what the test set for its path.
 import "./host";
-import { createDecipheriv } from "node:crypto";
+import { createDecipheriv, createHash } from "node:crypto";
 import { prompts, storage } from "./host";
 import { signOut } from "../index";
 
@@ -48,10 +48,13 @@ export async function quickly<T>(f: () => Promise<T>): Promise<T> {
   }
 }
 
+// A request as eapi takes it: decrypted, and refused unless its digest is right.
 function decrypt(params: string) {
   const d = createDecipheriv("aes-128-ecb", Buffer.from("e82ckenh8dichen8"), null);
   const text = Buffer.concat([d.update(Buffer.from(params, "hex")), d.final()]).toString("utf8");
-  const [path, json] = text.split("-36cd479b6b5-");
+  const [path, json, digest] = text.split("-36cd479b6b5-");
+  const want = createHash("md5").update(`nobody${path}use${json}md5forencrypt`).digest("hex");
+  if (digest !== want) throw new Error(`eapi digest mismatch for ${path}`);
   return { path, data: JSON.parse(json) };
 }
 

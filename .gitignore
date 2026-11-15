@@ -1,3 +1,4 @@
 node_modules/
 coverage/
 .metrics/
+.DS_Store

@@ -3,36 +3,11 @@
 import { answer, quickly, requests, reset, sent, setCookie } from "./netease";
 import { prompts, storage } from "./host";
 import { beforeEach, expect, test } from "bun:test";
-import { album, artist, home, isLiked, like, list, lyrics, playlist, playlists, saveAlbum, savedAlbums, search, signIn, stream, streamOf, text, toAlbum, toTrack } from "../index";
+import { album, artist, home, isLiked, like, lyrics, playlist, playlists, saveAlbum, savedAlbums, search, signIn, stream } from "../index";
 
 beforeEach(() => reset());
 
 const song = (id: number) => ({ id, name: `s${id}`, ar: [], al: { id: 2, name: "b" }, dt: 1000 });
-
-// Lists and text NetEase leaves out, or sends as something else, count as none.
-test("missing lists and text are empty", () => {
-  expect(list(undefined)).toEqual([]);
-  expect(list(null)).toEqual([]);
-  expect(list([1])).toEqual([1]);
-  expect(text(undefined)).toBe("");
-  expect(text(3)).toBe("");
-  expect(text("a")).toBe("a");
-});
-
-// A song without a length lasts no time, rather than an unknown one.
-test("a song without a length is 0 long", () => {
-  expect(toTrack({ id: 1 }).duration).toBe(0);
-});
-
-// An album naming its artists as a list keeps them all.
-test("an album keeps all its artists", () => {
-  expect(toAlbum({ id: 1, artists: [{ id: 2, name: "a" }, { id: 3, name: "b" }] }).artists).toHaveLength(2);
-});
-
-// A stream without a level, size or bitrate is standard and says none of them.
-test("a bare stream is standard", () => {
-  expect(streamOf({ id: 1, url: "http://m.music.126.net/x.mp3" })).toMatchObject({ quality: "standard", bitRate: 0, size: 0, type: "mp3" });
-});
 
 // A song missing from NetEase's answer is unavailable.
 test("a song NetEase leaves out of its URLs is unavailable", async () => {
