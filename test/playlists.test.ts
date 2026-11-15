@@ -11,6 +11,12 @@ test("creates a public playlist of the listener's", async () => {
   expect(sent("/api/playlist/create")[0]).toMatchObject({ name: "Drive", privacy: "0", type: "NORMAL" });
 });
 
+// NetEase saying it made a playlist but not giving it back is an error.
+test("a playlist NetEase didn't give back fails", async () => {
+  answer("/api/playlist/create", { code: 200 });
+  await expect(createPlaylist({ name: "Drive" })).rejects.toThrow("NetEase didn't make the playlist.");
+});
+
 // Renaming tells NetEase the playlist and its new name.
 test("renames a playlist", async () => {
   answer("/api/playlist/update/name", { code: 200 });

@@ -39,6 +39,8 @@ test("marks a song the listener can't play as unavailable", () => {
   expect(toTrack(song, { st: 0, pl: 0 }).unavailable).toBe(true);
   expect(toTrack({ ...song, privilege: { st: 0, pl: 0 } }).unavailable).toBe(true);
   expect(toTrack(song, { st: 0, pl: 320000 }).unavailable).toBeUndefined();
+  // A privilege that doesn't say the song is listed isn't taken to.
+  expect(toTrack(song, { pl: 320000 }).unavailable).toBe(true);
 });
 
 // An album's release time becomes the date it came out, in China's time zone.
