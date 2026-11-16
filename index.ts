@@ -349,6 +349,8 @@ const session = () => (host.storage.get("session") as Session | undefined) ?? nu
 function forget() {
   host.storage.remove("session");
   likedSongs.forget();
+  run = null;
+  lastPlayed = null;
 }
 
 type Options = { cookie?: string; codes?: number[]; signedIn?: boolean };
@@ -922,15 +924,70 @@ async function wbiSigner(get: BilibiliGet): Promise<WbiSign> {
 // The Stand-in Sources, best first.
 const SOURCES: Source[] = [BODIAN, KUGOU, BILIBILI];
 
-// ---- Personal FM ----
+// ---- Stations ----
 
 export async function stations() {
   if (!session()) throw signInFirst();
-  return [{ id: "fm", name: host.t("Personal FM"), description: host.t("Songs NetEase picks for you, one after another") }];
+  return [
+    { id: "fm", name: host.t("Personal FM"), description: host.t("Songs NetEase picks for you, one after another") },
+    { id: "heartbeat", name: host.t("Heartbeat"), description: host.t("Songs like one you've liked, mixing your Liked songs with new ones") },
+  ];
 }
 
-export async function stationNext(_: { id: string }) {
+export async function stationNext({ id }: { id: string }) {
+  if (id === "heartbeat") return heartbeatNext();
   return tracksFrom((await api<{ data?: NSong[] }>("/api/v1/radio/get", {}, SIGNED_IN)).data);
+}
+
+// ---- Heartbeat ----
+
+// A Heartbeat run: its Seed, the listener's Liked playlist it draws on, and
+// the songs it gave, the last one last.
+type Run = { seed: string; likedPlaylist: string; given: string[] };
+
+// The run going on, and the last song the app played from the plugin. They
+// live as long as the plugin does, so they end when the app does.
+let run: Run | null = null;
+let lastPlayed: string | null = null;
+
+// Heartbeat hears of each song the app plays, Play Reports on or off.
+function heard(id: string) {
+  lastPlayed = id;
+}
+
+// Whether a run goes on: nothing has played yet, or the last song played is its own.
+const goesOn = (r: Run, last: string | null) => last === null || last === r.seed || r.given.includes(last);
+
+// The next songs of Heartbeat: those like the last song the run gave or, to
+// start a run, those like a Seed. The Seed is the liked song just played, or
+// else a random liked song, played first.
+async function heartbeatNext(): Promise<Track[]> {
+  if (run && goesOn(run, lastPlayed)) {
+    const tracks = await songsLike(run.given.at(-1) ?? run.seed, run);
+    run.given.push(...tracks.map((t) => t.id));
+    return tracks;
+  }
+  const liked = await likedSongs.get();
+  if (!liked.size) throw new Error(host.t("Like some songs to start Heartbeat."));
+  const justHeard = lastPlayed !== null && liked.has(lastPlayed) ? lastPlayed : null;
+  const seed = justHeard ?? [...liked][Math.floor(Math.random() * liked.size)];
+  const start = { seed, likedPlaylist: await likedPlaylist() };
+  const tracks = [...(justHeard ? [] : await tracksOf([seed])), ...(await songsLike(seed, start))];
+  run = { ...start, given: tracks.map((t) => t.id) };
+  return tracks;
+}
+
+// Songs like the song id names, in a Heartbeat run, as NetEase picks them
+// from the listener's Liked songs and beyond.
+async function songsLike(id: string, r: Omit<Run, "given">): Promise<Track[]> {
+  const data = { songId: id, startMusicId: r.seed, playlistId: r.likedPlaylist, type: "fromPlayOne", count: 1 };
+  const body = await api<{ data?: { songInfo?: NSong }[] }>("/api/playmode/intelligence/list", data, SIGNED_IN);
+  return tracksFrom(list(body.data).flatMap((d) => (d.songInfo ? [d.songInfo] : [])));
+}
+
+// The id of the listener's Liked songs playlist.
+async function likedPlaylist(): Promise<string> {
+  return idOf((await userPlaylists()).find(isLikedSongs)?.id);
 }
 
 // ---- Podcasts ----
@@ -1072,6 +1129,7 @@ const reportPlays = () => host.setting("reportPlays") === "true";
 // Sends NetEase a Play Report for a song the app started playing. The app
 // doesn't say how long it was heard, so it counts as heard whole.
 export async function played({ id }: { id: string }) {
+  heard(id);
   if (!session() || refOf(id).kind !== "song" || !reportPlays()) return;
   const time = Math.round(((await songDetail(id)).dt ?? 0) / 1000);
   // The Play Report, as one of NetEase's weblog logs.

@@ -4,9 +4,9 @@ import { stationNext, stations } from "../index";
 
 beforeEach(() => reset());
 
-// Signed in, the listener has one station: their Personal FM.
-test("the listener's one station is Personal FM", async () => {
-  expect(await stations()).toEqual([{ id: "fm", name: expect.any(String), description: expect.any(String) }]);
+// Signed in, the listener's first station is their Personal FM.
+test("the listener's first station is Personal FM", async () => {
+  expect((await stations())[0]).toEqual({ id: "fm", name: expect.any(String), description: expect.any(String) });
 });
 
 // Signed out, opening Personal FM asks the listener to sign in, rather than show nothing.
