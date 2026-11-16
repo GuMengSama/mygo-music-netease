@@ -28,7 +28,7 @@ export function setCookie(path: string, cookie: string) {
 export const sent = (path: string) => requests.filter((r) => r.path === path).map((r) => r.data);
 
 // Another service's answer to a request: JSON, or a whole Response.
-export type WebRequest = { url: URL; method: string; headers: Record<string, string>; body: string };
+export type WebRequest = { url: URL; method: string; headers: Record<string, string>; body: string; signal?: AbortSignal };
 type Serve = (r: WebRequest) => any;
 const served = new Map<string, Serve>();
 export const webRequests: WebRequest[] = [];
@@ -97,7 +97,7 @@ async function web(url: URL, init: RequestInit): Promise<Response> {
     unserved.push(url.hostname);
     throw new Error(`no test served ${url.hostname}`);
   }
-  const r = { url, method: init.method ?? "GET", headers: headersOf(init.headers), body: String(init.body ?? "") };
+  const r = { url, method: init.method ?? "GET", headers: headersOf(init.headers), body: String(init.body ?? ""), signal: init.signal ?? undefined };
   webRequests.push(r);
   const a = await served.get(host)!(r);
   return a instanceof Response ? a : Response.json(a);

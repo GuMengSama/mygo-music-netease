@@ -175,7 +175,7 @@ function toTrack(song: NSong, privilege: NPrivilege | undefined = song.privilege
     album: albumRefOf(song.al ?? song.album ?? {}),
     duration: song.dt ?? song.duration ?? 0,
   };
-  if (!playable(privilege)) track.unavailable = true;
+  if (!playable(privilege) && !otherSources()) track.unavailable = true;
   return track;
 }
 
@@ -605,8 +605,318 @@ export async function stream({ id, quality }: { id: string; quality: string }) {
     const s = streamOf(list(body.data).find((x) => String(x.id) === song));
     if (s) return s;
   }
-  throw fail("unavailable", "NetEase won't play this song for this account here.");
+  const ref = refOf(id);
+  if (ref.kind !== "song" || !otherSources()) throw fail("unavailable", "NetEase won't play this song for this account here.");
+  const wanted = await wantedOf(ref.id).catch(() => null);
+  const s = wanted && (await standIn(wanted, quality));
+  if (s) return s;
+  throw fail("unavailable", "NetEase won't play this song, and no other source has it.");
 }
+
+// ---- Stand-ins ----
+
+// Whether the listener lets songs NetEase won't play come from other services.
+const otherSources = () => host.setting("otherSources") === "true";
+
+// The NetEase song a Stand-in has to be: its title, artists, and length in ms.
+type Wanted = { title: string; artists: string[]; duration: number };
+
+// A note in brackets on a NetEase title saying whose song it covers, which no
+// other service names the song with.
+const COVER_NOTE = /\s*[(（][^)）]*(cover|翻自)[^)）]*[)）]/gi;
+
+async function wantedOf(id: string): Promise<Wanted> {
+  const body = await api<{ songs?: NSong[] }>("/api/v3/song/detail", { c: JSON.stringify([{ id }]) });
+  const song = list(body.songs)[0] ?? {};
+  return {
+    title: text(song.name).replace(COVER_NOTE, "").trim(),
+    artists: list(song.ar).map((a) => text(a.name)),
+    duration: song.dt ?? 0,
+  };
+}
+
+// The Stand-in for wanted at the app's quality, or null when there's none.
+//
+// Every source looks at once, but SOURCES' order picks: a better source's
+// Stand-in wins even when it comes later. Once STAND_IN_TIME passes, the best
+// that has come plays, and what's still being asked is let go.
+async function standIn(wanted: Wanted, quality: string): Promise<Stream | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), STAND_IN_TIME);
+  const timeUp = new Promise<null>((done) => controller.signal.addEventListener("abort", () => done(null)));
+  const came: (Stream | null)[] = SOURCES.map(() => null);
+  const looks = SOURCES.map((source, i) => standInOn(source, wanted, quality, controller.signal).then((s) => (came[i] = s)));
+  try {
+    for (const look of looks) {
+      const s = await Promise.race([look, timeUp]);
+      if (controller.signal.aborted) return came.find((s) => s) ?? null;
+      if (s) return s;
+    }
+    return null;
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+const STAND_IN_TIME = 8000;
+
+// The first of source's Matches whose audio comes. A source that fails or
+// answers what it shouldn't has none.
+async function standInOn(source: Source, wanted: Wanted, quality: string, signal: AbortSignal): Promise<Stream | null> {
+  const found = await source.search(wanted, signal).catch((): Found[] => []);
+  for (const f of found.filter((f) => source.matches(wanted, f))) {
+    const s = await f.stream(quality).catch(() => null);
+    if (s && (await comes(s, signal))) return s;
+  }
+  return null;
+}
+
+// A Stand-in Source: how to find songs on it, and which of them are Matches.
+// What it finds plays with the signal it was found with.
+type Source = { search(wanted: Wanted, signal: AbortSignal): Promise<Found[]>; matches(wanted: Wanted, found: Found): boolean };
+
+// Whether a Stand-in's audio comes: its first 8 KB, asked for as the player would.
+async function comes(s: Stream, signal: AbortSignal): Promise<boolean> {
+  try {
+    const res = await fetch(s.url, { headers: { ...s.headers, range: `bytes=0-${CHECK_BYTES - 1}` }, signal });
+    return res.status === 206 && (await res.arrayBuffer()).byteLength === CHECK_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+const CHECK_BYTES = 8192;
+
+// Whether a song found elsewhere is the same recording as wanted: the same
+// title and version, a shared artist, and as long, give or take tolerance ms,
+// when both lengths are known.
+function isMatch(wanted: Wanted, found: Found, tolerance: number): boolean {
+  if (plain(found.title) !== plain(wanted.title)) return false;
+  const artists = new Set(wanted.artists.map(plain));
+  return found.artists.some((a) => artists.has(plain(a))) && closeInLength(wanted, found, tolerance);
+}
+
+// Whether two songs are as long, give or take tolerance ms, or either length is unknown.
+function closeInLength(wanted: Wanted, found: Found, tolerance: number): boolean {
+  return !wanted.duration || !found.duration || Math.abs(wanted.duration - found.duration) <= tolerance;
+}
+
+// A name as compared across services: no case, spaces or bracket marks.
+function plain(name: string): string {
+  return name.toLowerCase().replace(/[\s()（）\[\]【】]/g, "");
+}
+
+// What a Stand-in Source is asked for: FLAC, 320k or 128k.
+type Tier = "flac" | "320" | "128";
+
+// The Tiers to ask for at the app's quality, best first: FLAC for Lossless,
+// else 320k, then each below.
+function tiersFor(quality: string): Tier[] {
+  return quality === "lossless" ? ["flac", "320", "128"] : ["320", "128"];
+}
+
+// The app's quality for audio a Stand-in Source gave.
+function qualityOf(type: string, bitRate: number): string {
+  if (type === "flac") return "lossless";
+  return bitRate >= 320000 ? "high" : "standard";
+}
+
+// A song a Stand-in Source found, as it names it, and how to play it.
+type Found = { title: string; artists: string[]; duration: number; stream(quality: string): Promise<Stream | null> };
+
+// ---- Kugou ----
+
+const KUGOU: Source = { search: kugouSearch, matches: (w, f) => isMatch(w, f, 5000) };
+
+// What a service sent in a list where it should be an object, and is.
+const isObject = <T,>(x: T): x is T & object => typeof x === "object" && x !== null;
+
+type KSong = { songname?: string; singername?: string; duration?: number; hash?: string; "320hash"?: string; sqhash?: string; album_id?: string };
+type KFile = { status?: number; url?: string[]; extName?: string; bitRate?: number; fileSize?: number };
+
+async function kugouSearch(wanted: Wanted, signal: AbortSignal): Promise<Found[]> {
+  const keyword = encodeURIComponent([wanted.title, ...wanted.artists].join(" "));
+  const res = await fetch(`http://mobilecdn.kugou.com/api/v3/search/song?keyword=${keyword}&page=1&pagesize=10`, { signal });
+  const body = (await res.json()) as { data?: { info?: KSong[] } };
+  return list(body.data?.info).filter(isObject).map((k) => ({
+    title: text(k.songname),
+    artists: text(k.singername).split("、"),
+    duration: (Number(k.duration) || 0) * 1000,
+    stream: async (quality) => {
+      const hashes: Record<Tier, string> = { flac: text(k.sqhash), "320": text(k["320hash"]), "128": text(k.hash) };
+      for (const tier of tiersFor(quality)) {
+        const s = hashes[tier] ? await kugouFile(hashes[tier], text(k.album_id), signal) : null;
+        if (s) return s;
+      }
+      return null;
+    },
+  }));
+}
+
+async function kugouFile(hash: string, album: string, signal: AbortSignal): Promise<Stream | null> {
+  const key = host.crypto.md5(`${hash}kgcloudv2`);
+  const res = await fetch(`http://trackercdn.kugou.com/i/v2/?key=${key}&hash=${hash}&appid=1005&pid=2&cmd=25&behavior=play&album_id=${album}`, { signal });
+  const f = (await res.json()) as KFile;
+  const url = list(f.url)[0];
+  if (!url) return null;
+  const type = text(f.extName).toLowerCase();
+  const bitRate = Number(f.bitRate) || 0;
+  return { url, type, quality: qualityOf(type, bitRate), bitRate, size: Number(f.fileSize) || 0, headers: {} };
+}
+
+// ---- Bodian (Kuwo's 波点 app) ----
+
+const BODIAN: Source = { search: bodianSearch, matches: (w, f) => isMatch(w, f, 5000) };
+
+type BSong = { MUSICRID?: string; SONGNAME?: string; ARTIST?: string; DURATION?: string };
+type BAudio = { code?: number; data?: { audioUrl?: string; format?: string; bitrate?: number } };
+
+const BODIAN_BR: Record<Tier, string> = { flac: "2000kflac", "320": "320kmp3", "128": "128kmp3" };
+
+// What Bodian's app sends with each request, as one device for as long as the
+// plugin runs.
+const BODIAN_HEADERS = {
+  "user-agent": "Dart/2.19 (dart:io)",
+  plat: "ar",
+  channel: "aliopen",
+  devid: String(Math.floor(Math.random() * 1e11)),
+  ver: "3.9.0",
+};
+
+async function bodianSearch(wanted: Wanted, signal: AbortSignal): Promise<Found[]> {
+  const all = encodeURIComponent([wanted.title, ...wanted.artists].join(" "));
+  const res = await fetch(`http://search.kuwo.cn/r.s?&correct=1&vipver=1&stype=comprehensive&encoding=utf8&rformat=json&mobi=1&show_copyright_off=1&searchapi=6&all=${all}`, { signal });
+  const body = (await res.json()) as { content?: { musicpage?: { abslist?: BSong[] } }[] };
+  return list(list(body.content)[1]?.musicpage?.abslist).filter(isObject).map((b) => ({
+    title: text(b.SONGNAME),
+    artists: text(b.ARTIST).split("&"),
+    duration: (Number(b.DURATION) || 0) * 1000,
+    stream: (quality) => bodianAudio(text(b.MUSICRID).split("_").pop() ?? "", quality, signal),
+  }));
+}
+
+// Bodian plays paid songs to a device that has watched its ad, so it watches
+// one first.
+async function bodianAudio(id: string, quality: string, signal: AbortSignal): Promise<Stream | null> {
+  await fetch("http://bd-api.kuwo.cn/api/service/advert/watch?uid=-1&token=&timestamp=1724306124436&sign=15a676d66285117ad714e8c8371691da", {
+    method: "POST",
+    headers: { ...BODIAN_HEADERS, qimei36: "1e9970cbcdc20a031dee9f37100017e1840e", "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ type: 5, subType: 5, musicId: 0, adToken: "" }),
+    signal,
+  });
+  for (const tier of tiersFor(quality)) {
+    const res = await fetch(bodianSigned(`http://bd-api.kuwo.cn/api/play/music/v2/audioUrl?&br=${BODIAN_BR[tier]}&musicId=${id}`), { headers: BODIAN_HEADERS, signal });
+    const body = (await res.json()) as BAudio;
+    const url = text(body.data?.audioUrl);
+    if (body.code !== 200 || !url) continue;
+    const type = text(body.data?.format).toLowerCase();
+    const bitRate = (Number(body.data?.bitrate) || 0) * 1000;
+    return { url, type, quality: qualityOf(type, bitRate), bitRate, size: 0, headers: {} };
+  }
+  return null;
+}
+
+// url with the time and the signature Bodian's app adds: md5 of a salt, the
+// query's letters and digits sorted, and the path.
+function bodianSigned(url: string): string {
+  const timed = `${url}&timestamp=${Date.now()}`;
+  const chars = timed.slice(timed.indexOf("?")).replace(/[^a-zA-Z0-9]/g, "").split("").sort().join("");
+  return `${timed}&sign=${host.crypto.md5(`kuwotest${chars}${new URL(url).pathname}`)}`;
+}
+
+// ---- Bilibili videos ----
+
+const BILIBILI: Source = { search: bilibiliSearch, matches: isVideoMatch };
+
+// Whether a video an uploader titled is wanted: named for the song and one of
+// its artists, not a cover or a backing track, of the same version, and as
+// long, give or take 10s.
+function isVideoMatch(wanted: Wanted, found: Found): boolean {
+  const title = plain(found.title);
+  if (!title.includes(plain(wanted.title)) || !wanted.artists.some((a) => title.includes(plain(a)))) return false;
+  // Marker words count only as whole words outside the song's and artists' names.
+  const rest = [wanted.title, ...wanted.artists]
+    .filter(Boolean)
+    .reduce((t, name) => t.split(name.toLowerCase()).join(" "), found.title.toLowerCase());
+  if (COVER.test(rest)) return false;
+  const own = wanted.title.toLowerCase();
+  if (VERSIONS.some((v) => v.test(rest) && !v.test(own))) return false;
+  return closeInLength(wanted, found, 10000);
+}
+
+// Words marking a cover or a backing track.
+const COVER = /\bcover\b|翻唱|翻自|伴奏/;
+
+// Words naming a version of a song other than the one first released.
+const VERSIONS = [/\blive\b/, /现场/, /\bremix\b/, /\binstrumental\b/, /\bacoustic\b/, /\bdemo\b/, /\bdj\b/];
+
+type BVideo = { title?: string; duration?: string; bvid?: string };
+type BDash = { data?: { dash?: { audio?: { base_url?: string; bandwidth?: number }[] } } };
+
+const BILIBILI_HEADERS = { "user-agent": WEB_HEADERS["user-agent"], referer: "https://www.bilibili.com/" };
+
+async function bilibiliSearch(wanted: Wanted, signal: AbortSignal): Promise<Found[]> {
+  const get = <T,>(path: string) => bilibiliGet<T>(path, signal);
+  const sign = await wbiSigner(get);
+  const keyword = [wanted.title, ...wanted.artists].join(" ");
+  const body = await get<{ data?: { result?: BVideo[] } }>(`/x/web-interface/wbi/search/type?${sign({ search_type: "video", keyword })}`);
+  return list(body.data?.result).filter(isObject).map((v) => ({
+    // Bilibili marks the words searched for in titles.
+    title: text(v.title).replace(/<[^>]*>/g, ""),
+    artists: [],
+    duration: secondsOf(text(v.duration)) * 1000,
+    stream: () => bilibiliAudio(text(v.bvid), sign, get),
+  }));
+}
+
+// A length Bilibili gives as m:ss or h:mm:ss, in seconds.
+function secondsOf(clock: string): number {
+  return clock.split(":").reduce((total, part) => total * 60 + (Number(part) || 0), 0);
+}
+
+// A video's best audio: of its first page, its DASH audio with the most bits.
+async function bilibiliAudio(bvid: string, sign: WbiSign, get: BilibiliGet): Promise<Stream | null> {
+  const view = await get<{ data?: { cid?: number } }>(`/x/web-interface/wbi/view?${sign({ bvid })}`);
+  const play = await get<BDash>(`/x/player/wbi/playurl?${sign({ bvid, cid: Number(view.data?.cid), fnval: 16, platform: "pc" })}`);
+  const [best] = list(play.data?.dash?.audio).filter(isObject).sort((a, b) => (Number(b.bandwidth) || 0) - (Number(a.bandwidth) || 0));
+  if (!best?.base_url) return null;
+  const bitRate = Number(best.bandwidth) || 0;
+  return { url: best.base_url, type: "m4a", quality: qualityOf("m4a", bitRate), bitRate, size: 0, headers: { ...BILIBILI_HEADERS } };
+}
+
+type BilibiliGet = <T>(path: string) => Promise<T>;
+
+async function bilibiliGet<T>(path: string, signal: AbortSignal): Promise<T> {
+  return (await (await fetch(`https://api.bilibili.com${path}`, { headers: BILIBILI_HEADERS, signal })).json()) as T;
+}
+
+// Signs a query as Bilibili's web player does (WBI): the time, then md5 of the
+// sorted query and a key mixed from the two Bilibili hands out each day.
+type WbiSign = (params: Record<string, string | number>) => string;
+
+const WBI_MIXIN = [
+  46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+  61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+];
+
+async function wbiSigner(get: BilibiliGet): Promise<WbiSign> {
+  const nav = await get<{ data?: { wbi_img?: { img_url?: string; sub_url?: string } } }>("/x/web-interface/nav");
+  const keyOf = (url: unknown) => text(url).slice(text(url).lastIndexOf("/") + 1, text(url).lastIndexOf("."));
+  const keys = keyOf(nav.data?.wbi_img?.img_url) + keyOf(nav.data?.wbi_img?.sub_url);
+  const mixin = WBI_MIXIN.map((n) => keys[n] ?? "").join("").slice(0, 32);
+  return (params) => {
+    const all: Record<string, string | number> = { ...params, wts: Math.round(Date.now() / 1000) };
+    const query = Object.keys(all)
+      .sort()
+      .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(all[k]).replace(/[!'()*]/g, ""))}`)
+      .join("&");
+    return `${query}&w_rid=${host.crypto.md5(query + mixin)}`;
+  };
+}
+
+// The Stand-in Sources, best first.
+const SOURCES: Source[] = [BODIAN, KUGOU, BILIBILI];
 
 // ---- Personal FM ----
 

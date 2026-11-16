@@ -6,7 +6,7 @@
   "main": "index.ts",
   "playback": "stream",
   "permissions": {
-    "network": ["music.163.com", "interface.music.163.com", "*.music.126.net"]
+    "network": ["music.163.com", "interface.music.163.com", "*.music.126.net", "*.kugou.com", "*.kuwo.cn", "api.bilibili.com", "*.bilivideo.cn", "*.bilivideo.com", "*.akamaized.net"]
   },
   "settings": [
     {
@@ -14,6 +14,12 @@
       "label": "Prefer Hi-Res",
       "type": "boolean",
       "help": "When the app's quality is Lossless, ask for Hi-Res first. Type true or false if your app shows a text field."
+    },
+    {
+      "key": "otherSources",
+      "label": "Play from other sources",
+      "type": "boolean",
+      "help": "When NetEase won't play a song whole, play the same song from another music service. Its audio may differ from NetEase's, and that service's terms apply. Type true or false if your app shows a text field."
     }
   ],
   "navigation": [
