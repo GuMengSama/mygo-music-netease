@@ -20,6 +20,12 @@
       "label": "Play from other sources",
       "type": "boolean",
       "help": "When NetEase won't play a song whole, play the same song from another music service. Its audio may differ from NetEase's, and that service's terms apply. Type true or false if your app shows a text field."
+    },
+    {
+      "key": "reportPlays",
+      "label": "Report plays to NetEase",
+      "type": "boolean",
+      "help": "Tell NetEase which songs you play here, so they count in your listening history and shape its picks for you. Type true or false if your app shows a text field."
     }
   ],
   "navigation": [

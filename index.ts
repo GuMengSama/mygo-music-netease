@@ -460,6 +460,11 @@ function tracksFrom(songs: NSong[] = [], privileges: NPrivilege[] = []): Track[]
   return songs.map((s) => toTrack(s, byId.get(String(s.id)) ?? s.privilege));
 }
 
+// What NetEase says of one song, or nothing when it knows no such song.
+async function songDetail(id: string): Promise<NSong> {
+  return list((await api<{ songs?: NSong[] }>("/api/v3/song/detail", { c: JSON.stringify([{ id }]) })).songs)[0] ?? {};
+}
+
 // The most songs NetEase details in one request.
 const DETAIL_BATCH = 500;
 
@@ -626,8 +631,7 @@ type Wanted = { title: string; artists: string[]; duration: number };
 const COVER_NOTE = /\s*[(（][^)）]*(cover|翻自)[^)）]*[)）]/gi;
 
 async function wantedOf(id: string): Promise<Wanted> {
-  const body = await api<{ songs?: NSong[] }>("/api/v3/song/detail", { c: JSON.stringify([{ id }]) });
-  const song = list(body.songs)[0] ?? {};
+  const song = await songDetail(id);
   return {
     title: text(song.name).replace(COVER_NOTE, "").trim(),
     artists: list(song.ar).map((a) => text(a.name)),
@@ -1052,8 +1056,27 @@ export async function like({ id, on }: { id: string; on: boolean }) {
 }
 
 export async function playlists() {
-  const body = await api<{ playlist?: NPlaylist[] }>("/api/user/playlist", { uid: me(), limit: 1000 }, SIGNED_IN);
-  return myPlaylists(list(body.playlist), me());
+  return myPlaylists(await userPlaylists(), me());
+}
+
+// The playlists the signed-in listener made or saved, as NetEase lists them.
+async function userPlaylists(): Promise<NPlaylist[]> {
+  return list((await api<{ playlist?: NPlaylist[] }>("/api/user/playlist", { uid: me(), limit: 1000 }, SIGNED_IN)).playlist);
+}
+
+// ---- Play Reports ----
+
+// Play Reports wait for the listener to turn them on.
+const reportPlays = () => host.setting("reportPlays") === "true";
+
+// Sends NetEase a Play Report for a song the app started playing. The app
+// doesn't say how long it was heard, so it counts as heard whole.
+export async function played({ id }: { id: string }) {
+  if (!session() || refOf(id).kind !== "song" || !reportPlays()) return;
+  const time = Math.round(((await songDetail(id)).dt ?? 0) / 1000);
+  // The Play Report, as one of NetEase's weblog logs.
+  const log = { action: "play", json: { id, type: "song", time, end: "playend", source: "list", sourceId: "", download: 0, wifi: 0 } };
+  await api("/api/feedback/weblog", { logs: JSON.stringify([log]) }, SIGNED_IN);
 }
 
 // ---- Playlist editing ----

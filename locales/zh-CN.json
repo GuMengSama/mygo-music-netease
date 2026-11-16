@@ -28,6 +28,8 @@
   "NetEase won't play this song, and no other source has it.": "网易云不允许播放这首歌，其他音源也没有找到。",
   "Play from other sources": "从其他音源播放",
   "When NetEase won't play a song whole, play the same song from another music service. Its audio may differ from NetEase's, and that service's terms apply. Type true or false if your app shows a text field.": "网易云无法完整播放某首歌时，从其他音乐服务播放同一首歌。音频可能与网易云的版本不同，并须遵守该服务的条款。若显示为文本框，请填 true 或 false。",
+  "Report plays to NetEase": "向网易云报告播放记录",
+  "Tell NetEase which songs you play here, so they count in your listening history and shape its picks for you. Type true or false if your app shows a text field.": "告诉网易云你在这里播放了哪些歌，计入你的听歌记录，并让推荐更懂你。若显示为文本框，请填 true 或 false。",
   "My Subscriptions": "我的订阅",
   "Recommended Podcasts": "精选播客",
   "Popular Podcasts": "热门播客"
