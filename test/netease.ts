@@ -4,6 +4,7 @@ import "./host";
 import { createDecipheriv, createHash } from "node:crypto";
 import { prompts, storage } from "./host";
 import { signOut } from "../index";
+import { afterEach, expect } from "bun:test";
 
 type Answer = any | ((data: any) => any);
 export type Request = { path: string; data: any; headers: Record<string, string> };
@@ -26,11 +27,40 @@ export function setCookie(path: string, cookie: string) {
 // The requests made to path, by their data.
 export const sent = (path: string) => requests.filter((r) => r.path === path).map((r) => r.data);
 
+// Another service's answer to a request: JSON, or a whole Response.
+export type WebRequest = { url: URL; method: string; headers: Record<string, string>; body: string };
+type Serve = (r: WebRequest) => any;
+const served = new Map<string, Serve>();
+export const webRequests: WebRequest[] = [];
+// Hosts asked for that no test served, which fail the test after it ends:
+// the plugin may well swallow the refusal.
+export const unserved: string[] = [];
+
+// What host answers, for a host or "*.domain".
+export function serve(host: string, f: Serve) {
+  served.set(host, f);
+}
+
+// The requests made to a host, as served under that name.
+export const webSent = (host: string) => webRequests.filter((r) => servingOf(r.url.hostname) === host);
+
+function servingOf(hostname: string): string | undefined {
+  if (served.has(hostname)) return hostname;
+  return [...served.keys()].find((h) => h.startsWith("*.") && hostname.endsWith(h.slice(1)));
+}
+
+afterEach(() => {
+  const hosts = unserved.splice(0);
+  expect(hosts, "requests to hosts no test served").toEqual([]);
+});
+
 // A NetEase with nothing set, and a listener signed in as user 42, or not.
 export function reset(signedIn = true) {
   answers.clear();
   cookies.clear();
   requests.length = 0;
+  served.clear();
+  webRequests.length = 0;
   signOut();
   storage.clear();
   prompts.length = 0;
@@ -58,7 +88,28 @@ function decrypt(params: string) {
   return { path, data: JSON.parse(json) };
 }
 
-(globalThis as any).fetch = async (url: string, init: RequestInit) => {
+(globalThis as any).fetch = async (url: string, init: RequestInit = {}) =>
+  new URL(url).hostname === "interface.music.163.com" ? eapi(url, init) : web(new URL(url), init);
+
+async function web(url: URL, init: RequestInit): Promise<Response> {
+  const host = servingOf(url.hostname);
+  if (!host) {
+    unserved.push(url.hostname);
+    throw new Error(`no test served ${url.hostname}`);
+  }
+  const r = { url, method: init.method ?? "GET", headers: headersOf(init.headers), body: String(init.body ?? "") };
+  webRequests.push(r);
+  const a = await served.get(host)!(r);
+  return a instanceof Response ? a : Response.json(a);
+}
+
+function headersOf(h: HeadersInit | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  new Headers(h).forEach((v, k) => (out[k] = v));
+  return out;
+}
+
+async function eapi(url: string, init: RequestInit): Promise<Response> {
   const { path, data } = decrypt(String(init.body).slice("params=".length));
   if (new URL(url).pathname !== `/eapi/${path.slice("/api/".length)}`) throw new Error(`eapi path mismatch: ${url}`);
   if (data.e_r !== false) throw new Error("eapi answers encrypted unless e_r is false");
@@ -68,4 +119,4 @@ function decrypt(params: string) {
   const headers = new Headers({ "content-type": "application/json" });
   if (cookies.has(path)) headers.append("set-cookie", `${cookies.get(path)}; Path=/; HttpOnly`);
   return new Response(JSON.stringify(body), { headers });
-};
+}
